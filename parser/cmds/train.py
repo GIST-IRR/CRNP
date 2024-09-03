@@ -43,6 +43,8 @@ class Train(CMD):
             checkpoint = {"model": None, "optimizer": None}
             if hasattr(args, "seed"):
                 worker_init_fn, generator = reproducibility.fix_seed(args.seed)
+            else:
+                worker_init_fn, generator = None, None
 
         # Load dataset
         dataset = DataModule(

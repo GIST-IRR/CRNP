@@ -16,6 +16,12 @@ class NeuralPCFG(PCFG_module):
         super(NeuralPCFG, self).__init__()
         self.pcfg = PCFG()
         self.part = PartitionFunction()
+
+        self._set_arguments(args)
+        self._init_grammar()
+        self._initialize()
+
+    def _set_arguments(self, args):
         self.args = args
 
         # number of symbols
@@ -29,18 +35,26 @@ class NeuralPCFG(PCFG_module):
 
         self.temperature = getattr(args, "temperature", 1.0)
         self.smooth = getattr(args, "smooth", 0.0)
-
-        self.terms = Term_parameterizer(self.s_dim, self.T, self.V)
-        self.nonterms = Nonterm_parameterizer(
-            self.s_dim, self.NT, self.T, self.temperature
-        )
-        self.root = Root_parameterizer(self.s_dim, self.NT)
+        self.activation = getattr(args, "activation", "relu")
+        self.norm = getattr(args, "norm", None)
 
         # Partition function
         self.mode = getattr(args, "mode", "length_unary")
 
-        # I find this is important for neural/compound PCFG. if do not use this initialization, the performance would get much worser.
-        self._initialize()
+    def _init_grammar(self):
+        self.terms = Term_parameterizer(
+            self.s_dim,
+            self.T,
+            self.V,
+            activation=self.activation,
+            norm=self.norm,
+        )
+        self.nonterms = Nonterm_parameterizer(
+            self.s_dim, self.NT, self.T, norm=self.norm
+        )
+        self.root = Root_parameterizer(
+            self.s_dim, self.NT, activation=self.activation, norm=self.norm
+        )
 
     def update_dropout(self, rate):
         self.apply_dropout = self.init_dropout * rate
@@ -125,37 +139,19 @@ class NeuralPCFG(PCFG_module):
     def rules(self, rule):
         self._rules = rule
 
-    def forward(self, input):
-        x = input["word"]
-        b, n = x.shape[:2]
-
-        def roots():
-            roots = self.root()
-            roots = roots.expand(b, self.NT)
-            return roots
-
-        def terms():
-            term_prob = self.terms()
-            term_prob = term_prob[
-                torch.arange(self.T)[None, None], x[:, :, None]
-            ]
-            # term_prob = term_prob.expand(b, *term_prob.shape)
-            return term_prob
-
-        def rules():
-            rule_prob = self.nonterms()
-            rule_prob = rule_prob.reshape(self.NT, self.NT_T, self.NT_T)
-            rule_prob = rule_prob.expand(b, *rule_prob.shape)
-            return rule_prob
-
-        root, unary, rule = roots(), terms(), rules()
+    def forward(self):
+        # Root
+        root = self.root()
+        # Rule
+        rule = self.nonterms(reshape=True)
+        # Unary
+        unary = self.terms()
 
         # for gradient conflict by using gradients of rules
         if self.training:
             root.retain_grad()
             rule.retain_grad()
             unary.retain_grad()
-            pass
 
         self.clear_metrics()  # clear metrics becuase we have new rules
 
@@ -179,28 +175,36 @@ class NeuralPCFG(PCFG_module):
             )
             duplicated_index = counts.where(counts > 1)
 
-    def loss(self, input, partition=False, soft=False):
-        # b = input['word'].shape[0]
+    def batchify(self, rules, words):
+        b = words.shape[0]
+
+        root = rules["root"]
+        root = root.expand(b, root.shape[-1])
+
+        rule = rules["rule"]
+        rule = rule.expand(b, *rule.shape)
+
+        unary = rules["unary"]
+        unary = unary[torch.arange(self.T)[None, None], words[:, :, None]]
+
+        return {
+            "unary": unary,
+            "root": root,
+            "rule": rule,
+        }
+
+    def loss(self, input, partition=False, soft=False, **kwargs):
         words = input["word"]
-        # # Sequence permutate randomly
-        # input["word"] = words[:, torch.randperm(words.shape[1])]
 
         # Calculate rule distributions
-        self.rules = self.forward(input)
-        # terms = torch.randint(0, self.V, input["word"].shape, device=self.device)
-        # terms = self.term_from_unary(terms, self.rules["unary"])
-        # terms = self.term_from_unary(
-        #     input["word"], self.rules["unary"], smooth=self.smooth
-        # )
+        self.rules = self.forward()
+        self.rules = self.batchify(self.rules, words)
         self.rules["word"] = input["word"]
 
         if partition:
             result = self.pcfg(
                 self.rules, self.rules["unary"], lens=input["seq_len"], topk=1
             )
-            # sent = self.pcfg(
-            #     self.rules, terms, lens=input["seq_len"]
-            # )
             self.pf = self.part(
                 self.rules, lens=input["seq_len"], mode=self.mode
             )
@@ -220,17 +224,15 @@ class NeuralPCFG(PCFG_module):
         return -result["partition"]
 
     def evaluate(self, input, decode_type, depth=0, label=False, **kwargs):
-        self.rules = self.forward(input)
+        self.rules = self.forward()
+        self.rules = self.batchify(self.rules, input["word"])
 
-        b = input["word"].shape[0]
         lens = input["seq_len"]
-        rules = {k: v.expand(b, *v.shape[1:]) for k, v in self.rules.items()}
-        # terms = self.term_from_unary(input["word"], rules["unary"])
 
         if decode_type == "viterbi":
             result = self.pcfg(
-                rules,
-                rules["unary"],
+                self.rules,
+                self.rules["unary"],
                 lens=lens,
                 viterbi=True,
                 mbr=False,
@@ -239,8 +241,8 @@ class NeuralPCFG(PCFG_module):
             )
         elif decode_type == "mbr":
             result = self.pcfg(
-                rules,
-                rules["unary"],
+                self.rules,
+                self.rules["unary"],
                 lens=lens,
                 viterbi=False,
                 mbr=True,
@@ -252,7 +254,7 @@ class NeuralPCFG(PCFG_module):
 
         if depth > 0:
             result["depth"] = self.part(
-                rules, depth, mode="length", depth_output="full"
+                self.rules, depth, mode="length", depth_output="full"
             )
             result["depth"] = result["depth"].exp()
 

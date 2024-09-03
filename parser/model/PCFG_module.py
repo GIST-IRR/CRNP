@@ -68,7 +68,7 @@ class Nonterm_parameterizer(nn.Module):
         dim,
         NT,
         T,
-        temperature=2.0,
+        temperature=1.0,
         nonterm_emb=None,
         term_emb=None,
         no_rule_layer=False,
@@ -370,6 +370,18 @@ class PCFG_module(nn.Module):
             ent = (emax - ent) / emax
 
         return ent
+
+    @torch.no_grad()
+    def entropy_root(self, batch=False, probs=False, reduce="none"):
+        return self._entropy(
+            self.rules["root"], batch=batch, probs=probs, reduce=reduce
+        )
+
+    @torch.no_grad()
+    def entropy_terms(self, batch=False, probs=False, reduce="none"):
+        return self._entropy(
+            self.rules["unary"], batch=batch, probs=probs, reduce=reduce
+        )
 
     def update_depth(self, depth):
         self.depth = depth

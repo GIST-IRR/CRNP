@@ -11,7 +11,7 @@ data:
   vocab_cache: 'data/ptb-vocab.pickle'
   train_dataset_cache: 'data/ptb-train-cache.pickle'
   val_dataset_cache: 'data/ptb-val-cache.pickle'
-  test_dataset_cache: 'data/ptb-val-cache.pickle'  
+  test_dataset_cache: 'data/ptb-test-cache.pickle'  
   vocab_type: 'max_size'
   vocab_size: 10000
   min_freq: 2

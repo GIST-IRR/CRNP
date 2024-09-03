@@ -5,104 +5,123 @@ from ..model.PCFG_module import (
     Term_parameterizer,
     Root_parameterizer,
 )
-from ..modules.res import ResLayer
+from ..model.NeuralPCFG import NeuralPCFG
 
 from ..pfs.td_partition_function import TDPartitionFunction
+from ..pcfgs.pcfg import PCFG
 from ..pcfgs.tdpcfg import TDPCFG
 from torch.distributions.utils import logits_to_probs
 
 
-class Nonterm_parameterizer(nn.Module):
-    def __init__(self, dim, NT, r, term_emb):
+class Nonterm_parameterizer(PCFG_module):
+    def __init__(
+        self, dim, NT, T, r, nonterm_emb=None, term_emb=None, rank_proj=False
+    ):
         super(Nonterm_parameterizer, self).__init__()
         self.dim = dim
         self.NT = NT
+        self.T = T
         self.r = r
-        self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.dim))
-        self.term_emb = term_emb
+        self.rank_proj = rank_proj
+
+        if nonterm_emb is not None:
+            self.nonterm_emb = nonterm_emb
+        else:
+            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.dim))
+
+        if term_emb is not None:
+            self.term_emb = term_emb
+        else:
+            self.term_emb = nn.Parameter(torch.randn(self.T, self.dim))
 
         self.parent_mlp = nn.Sequential(
             nn.Linear(self.dim, self.dim),
             nn.ReLU(),
-            nn.Linear(self.dim, self.r),
         )
         self.left_mlp = nn.Sequential(
             nn.Linear(self.dim, self.dim),
             nn.ReLU(),
-            nn.Linear(self.dim, self.r),
         )
         self.right_mlp = nn.Sequential(
             nn.Linear(self.dim, self.dim),
             nn.ReLU(),
-            nn.Linear(self.dim, self.r),
         )
 
-    def forward(self):
+        if self.rank_proj:
+            self.rank_proj_mlp = nn.Linear(self.dim, self.r, bias=False)
+        else:
+            for l in [self.parent_mlp, self.left_mlp, self.right_mlp]:
+                l.append(nn.Linear(self.dim, self.r))
+
+    def forward(self, softmax="log"):
         rule_state_emb = torch.cat([self.nonterm_emb, self.term_emb], dim=0)
-        head = self.parent_mlp(self.nonterm_emb).log_softmax(-1)
-        left = self.left_mlp(rule_state_emb).log_softmax(-2)
-        right = self.right_mlp(rule_state_emb).log_softmax(-2)
+        head = self.parent_mlp(self.nonterm_emb)
+        left = self.left_mlp(rule_state_emb)
+        right = self.right_mlp(rule_state_emb)
+
+        if self.rank_proj:
+            head = self.rank_proj_mlp(head)
+            left = self.rank_proj_mlp(left)
+            right = self.rank_proj_mlp(right)
+
+        if softmax == "log":
+            head = head.log_softmax(-1)
+            left = left.log_softmax(-2)
+            right = right.log_softmax(-2)
+        elif softmax == "softmax":
+            head = head.softmax(-1)
+            left = left.softmax(-2)
+            right = right.softmax(-2)
         return head, left, right
 
 
-class TNPCFG(PCFG_module):
+class TNPCFG(NeuralPCFG):
     def __init__(self, args):
-        super(TNPCFG, self).__init__()
+        super(TNPCFG, self).__init__(args)
         self.pcfg = TDPCFG()
         self.part = TDPartitionFunction()
-        self.args = args
-        self.NT = args.NT
-        self.T = args.T
-        self.V = args.V
-        self.s_dim = args.s_dim
-        self.r = args.r_dim
-        self.word_emb_size = args.word_emb_size
 
-        ## root
-        self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
-        self.root_mlp = nn.Sequential(
-            nn.Linear(self.s_dim, self.s_dim),
-            ResLayer(self.s_dim, self.s_dim),
-            ResLayer(self.s_dim, self.s_dim),
-            nn.Linear(self.s_dim, self.NT),
-        )
-        # self.root = Root_parameterizer(self.s_dim, self.NT)
+    def _set_arguments(self, args):
+        super()._set_arguments(args)
+        self.r = getattr(args, "r_dim", 1000)
+        self.word_emb_size = getattr(args, "word_emb_size", 200)
+        self.embedding_sharing = getattr(args, "embedding_sharing", False)
+        self.rank_proj = getattr(args, "rank_proj", False)
 
+    def _init_grammar(self):
+        if self.embedding_sharing:
+            print("embedding sharing")
+            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
+            self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
+        else:
+            self.nonterm_emb = None
+            self.term_emb = None
         # terms
-        # self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
-        # self.term_mlp = nn.Sequential(nn.Linear(self.s_dim, self.s_dim),
-        #                               ResLayer(self.s_dim, self.s_dim),
-        #                               ResLayer(self.s_dim, self.s_dim),
-        #                               nn.Linear(self.s_dim, self.V))
-        self.terms = Term_parameterizer(self.s_dim, self.T, self.V)
-
-        self.rule_state_emb = nn.Parameter(
-            torch.randn(self.NT + self.T, self.s_dim)
+        self.terms = Term_parameterizer(
+            self.s_dim,
+            self.T,
+            self.V,
+            activation=self.activation,
+            norm=self.norm,
+            term_emb=self.term_emb,
         )
-        rule_dim = self.s_dim
-        self.parent_mlp = nn.Sequential(
-            nn.Linear(rule_dim, rule_dim),
-            nn.ReLU(),
-            nn.Linear(rule_dim, self.r),
+        self.nonterms = Nonterm_parameterizer(
+            self.s_dim,
+            self.NT,
+            self.T,
+            self.r,
+            nonterm_emb=self.nonterm_emb,
+            term_emb=self.term_emb,
+            rank_proj=self.rank_proj,
         )
-        self.left_mlp = nn.Sequential(
-            nn.Linear(rule_dim, rule_dim),
-            nn.ReLU(),
-            nn.Linear(rule_dim, self.r),
+        # root
+        self.root = Root_parameterizer(
+            self.s_dim,
+            self.NT,
+            activation=self.activation,
+            norm=self.norm,
+            nonterm_emb=self.nonterm_emb,
         )
-        self.right_mlp = nn.Sequential(
-            nn.Linear(rule_dim, rule_dim),
-            nn.ReLU(),
-            nn.Linear(rule_dim, self.r),
-        )
-        # self.nonterms = Nonterm_parameterizer(
-        #     self.s_dim, self.NT, self.r,
-        #     self.terms.term_emb
-        # )
-
-        # Partition function
-        self.mode = args.mode if hasattr(args, "mode") else None
-        self._initialize()
 
     def rules_similarity(self, unary=None):
         if unary is None:
@@ -119,31 +138,6 @@ class TNPCFG(PCFG_module):
             "cos_term": tcs,
             "log_cos_term": log_tcs,
         }
-
-    @property
-    def rules(self):
-        if getattr(self, "_rules", None) is None:
-            self._rules = self.forward({"word": torch.zeros([1, 1])})
-        return self._rules
-
-    @rules.setter
-    def rules(self, rule):
-        self._rules = rule
-
-    @property
-    def metrics(self):
-        if getattr(self, "_metrics", None) is None:
-            self._metrics = self.rules_similarity()
-        return self._metrics
-
-    def clear_metrics(self):
-        self._metrics = None
-
-    @torch.no_grad()
-    def entropy_root(self, batch=False, probs=False, reduce="none"):
-        return self._entropy(
-            self.rules["root"], batch=batch, probs=probs, reduce=reduce
-        )
 
     @torch.no_grad()
     def entropy_rules(self, batch=False, probs=False, reduce="none"):
@@ -172,45 +166,26 @@ class TNPCFG(PCFG_module):
 
         return ents
 
-    @torch.no_grad()
-    def entropy_terms(self, batch=False, probs=False, reduce="none"):
-        return self._entropy(
-            self.rules["unary"], batch=batch, probs=probs, reduce=reduce
-        )
+    def compose(self, rules):
+        head = rules["head"]
+        left = rules["left"]
+        right = rules["right"]
+        unary = rules["unary"]
+        root = rules["root"]
 
-    def forward(self, input, **kwargs):
-        x = input["word"]
-        b, n = x.shape[:2]
+        h = head.shape[0]
+        l = left.shape[0]
+        r = right.shape[0]
 
-        def roots():
-            roots = self.root_mlp(self.root_emb).log_softmax(-1)
-            # roots = self.root()
-            return roots.expand(b, roots.shape[-1]).contiguous()
+        rule = torch.einsum("ir, jr, kr -> ijk", head, left, right)
+        rule = rule.log().reshape(h, l, r)
 
-        def terms():
-            # term_prob = self.term_mlp(self.term_emb).log_softmax(-1)
-            # term_prob = term_prob.unsqueeze(0).unsqueeze(1).expand(
-            #     b, n, self.T, self.V
-            # )
-            term_prob = self.terms()
-            term_prob = term_prob.unsqueeze(0).expand(b, self.T, self.V)
-            # indices = x.unsqueeze(2).expand(b, n, self.T).unsqueeze(3)
-            # term_prob = torch.gather(term_prob, 3, indices).squeeze(3)
-            return term_prob
+        return {"unary": unary, "root": root, "rule": rule}
 
-        def rules():
-            rule_state_emb = self.rule_state_emb
-            nonterm_emb = rule_state_emb[: self.NT]
-            head = self.parent_mlp(nonterm_emb).log_softmax(-1)
-            left = self.left_mlp(rule_state_emb).log_softmax(-2)
-            right = self.right_mlp(rule_state_emb).log_softmax(-2)
-            # head, left, right = self.nonterms()
-            head = head.unsqueeze(0).expand(b, *head.shape)
-            left = left.unsqueeze(0).expand(b, *left.shape)
-            right = right.unsqueeze(0).expand(b, *right.shape)
-            return (head, left, right)
-
-        root, unary, (head, left, right) = roots(), terms(), rules()
+    def forward(self, **kwargs):
+        root = self.root()
+        unary = self.terms()
+        head, left, right = self.nonterms()
 
         # for gradient conflict by using gradients of rules
         if self.training:
@@ -220,6 +195,8 @@ class TNPCFG(PCFG_module):
             left.retain_grad()
             right.retain_grad()
 
+        self.clear_metrics()
+
         return {
             "unary": unary,
             "root": root,
@@ -228,11 +205,47 @@ class TNPCFG(PCFG_module):
             "right": right,
         }
 
-    def loss(self, input, partition=False, soft=False):
-        self.rules = self.forward(input)
-        terms = self.term_from_unary(input["word"], self.rules["unary"])
+    def batchify(self, rules, words):
+        b = words.shape[0]
 
-        result = self.pcfg(self.rules, terms, lens=input["seq_len"])
+        root = rules["root"]
+        unary = rules["unary"]
+
+        root = root.expand(b, root.shape[-1])
+        unary = unary[torch.arange(self.T)[None, None], words[:, :, None]]
+
+        if len(rules.keys()) == 5:
+            head = rules["head"]
+            left = rules["left"]
+            right = rules["right"]
+            head = head.unsqueeze(0).expand(b, *head.shape)
+            left = left.unsqueeze(0).expand(b, *left.shape)
+            right = right.unsqueeze(0).expand(b, *right.shape)
+            return {
+                "unary": unary,
+                "root": root,
+                "head": head,
+                "left": left,
+                "right": right,
+            }
+
+        elif len(rules.keys()) == 3:
+            rule = rules["rule"]
+            rule = rule.unsqueeze(0).expand(b, *rule.shape)
+            return {
+                "unary": unary,
+                "root": root,
+                "rule": rule,
+            }
+
+    def loss(self, input, partition=False, soft=False, label=False, **kwargs):
+        words = input["word"]
+        self.rules = self.forward()
+        self.rules = self.batchify(self.rules, words)
+
+        result = self.pcfg(
+            self.rules, self.rules["unary"], lens=input["seq_len"], label=label
+        )
         # Partition function
         if partition:
             self.pf = self.part(self.rules, input["seq_len"], mode=self.mode)
@@ -241,16 +254,46 @@ class TNPCFG(PCFG_module):
             result["partition"] = result["partition"] - self.pf
         return -result["partition"].mean()
 
-    def evaluate(self, input, decode_type, depth=0, label=False, **kwargs):
-        rules = self.forward(input)
-        terms = self.term_from_unary(input["word"], rules["unary"])
+    def evaluate(
+        self,
+        input,
+        decode_type="mbr",
+        depth=0,
+        label=False,
+        rule_update=False,
+        **kwargs
+    ):
+        if rule_update:
+            need_update = True
+        else:
+            if hasattr(self, "rules"):
+                need_update = False
+            else:
+                need_update = True
+
+        if need_update:
+            self.rules = self.forward()
 
         if decode_type == "viterbi":
-            assert NotImplementedError
+            if not hasattr(self, "viterbi_pcfg"):
+                self.viterbi_pcfg = PCFG()
+                self.rules = self.compose(self.rules)
+
+        rules = self.batchify(self.rules, input["word"])
+
+        if decode_type == "viterbi":
+            result = self.viterbi_pcfg(
+                rules,
+                rules["unary"],
+                lens=input["seq_len"],
+                viterbi=True,
+                mbr=False,
+                label=label,
+            )
         elif decode_type == "mbr":
             result = self.pcfg(
                 rules,
-                terms,
+                rules["unary"],
                 lens=input["seq_len"],
                 viterbi=False,
                 mbr=True,
@@ -259,10 +302,10 @@ class TNPCFG(PCFG_module):
         else:
             raise NotImplementedError
 
-        if depth > 0:
-            result["depth"] = self.part(
-                rules, depth, mode="length", depth_output="full"
-            )
-            result["depth"] = result["depth"].exp()
+        # if depth > 0:
+        #     result["depth"] = self.part(
+        #         rules, depth, mode="length", depth_output="full"
+        #     )
+        #     result["depth"] = result["depth"].exp()
 
         return result

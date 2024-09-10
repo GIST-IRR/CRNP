@@ -5,7 +5,6 @@ from collections import OrderedDict, defaultdict
 from torch.utils.tensorboard import SummaryWriter
 
 from utils import span_to_tree, clean_word
-from torch_support.metric import sentence_level_f1
 
 from parser.helper.metric import UF1
 

@@ -4,9 +4,6 @@ from pathlib import Path
 import pickle
 from copy import deepcopy
 
-import numpy as np
-import torch
-
 from nltk import Tree
 from utils import clean_word, clean_symbol
 

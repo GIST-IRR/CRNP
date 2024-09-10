@@ -1,7 +1,6 @@
 from collections import defaultdict, Counter
 import argparse
 import pickle
-from copy import deepcopy
 from itertools import repeat
 
 from nltk import Tree

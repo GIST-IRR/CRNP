@@ -1,14 +1,12 @@
 import pickle
 from pathlib import Path
 import argparse
-from collections import Counter, defaultdict
+from collections import defaultdict
 import itertools
 
 import numpy as np
-import torch
-from nltk import Tree
 
-from utils import load_trees, span_to_tree, tree_to_span, sort_span, clean_word
+from utils import load_trees, span_to_tree, sort_span
 from torch_support.metric import preprocess_span
 from torch_support.metric import sentence_level_f1 as f1
 from torch_support.metric import iou as IoU

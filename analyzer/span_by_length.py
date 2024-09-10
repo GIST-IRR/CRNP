@@ -4,9 +4,6 @@ from pathlib import Path
 import pickle
 from copy import deepcopy
 
-import numpy as np
-import torch
-
 from nltk import Tree
 from utils import clean_word, clean_symbol, tree_to_span
 
@@ -23,7 +20,7 @@ def main(
 ):
     # Load trees
     trees = []
-    with open(filepath, "r") as f:
+    with filepath.open("r") as f:
         for l in f:
             trees.append(Tree.fromstring(l))
     # Tree binarization
@@ -35,7 +32,7 @@ def main(
             t.collapse_unary(collapsePOS=True)
 
     # Load vocab
-    with open(vocab, "rb") as f:
+    with vocab.open("rb") as f:
         vocab = pickle.load(f)
 
     # Count unary productions
@@ -102,11 +99,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--filepath",
-        type=str,
+        type=Path,
         default="data/data.clean/edit-english-train.txt",
     )
-    parser.add_argument("--vocab", type=str, default="vocab/english.vocab")
-    parser.add_argument("--output", type=str, default="gold_term_prob.pkl")
+    parser.add_argument("--vocab", type=Path, default="vocab/english.vocab")
+    parser.add_argument("--output", type=Path, default="gold_term_prob.pkl")
     parser.add_argument("--binarization", default=False, action="store_true")
     parser.add_argument("--horzMarkov", type=int, default=0)
     parser.add_argument("--xbar", default=False, action="store_true")

@@ -36,43 +36,10 @@ class SplitPFTNPCFG(PFTNPCFG):
         words = input["word"]
         n_words = self.split_unknown(words, pos)
 
-        b, seq_len = words.shape[:2]
-
         self.rules = self.forward()
         self.rules = self.batchify(self.rules, n_words)
 
-        trees = None
-
-        if self.pretrained_models:
-            trees = []
-            # Tree selected from pre-trained parser
-            for parse in self.parse_trees:
-                tree = words.new_tensor(
-                    [parse.get(str(words[i].tolist())) for i in range(b)]
-                )
-                trees.append(tree)
-
-            # Calculate span frequency in predicted trees
-            trees = torch.stack(trees, dim=1)
-            # # Concatenated mask
-            trees = trees.reshape(b, -1, 2)
-
-        if trees is not None:
-            tree_mask = trees.new_zeros(b, seq_len + 1, seq_len + 1).float()
-            for i, t in enumerate(trees):
-                for s in t:
-                    tree_mask[i, s[0], s[1]] += 1
-
-            # Softmax mask
-            if self.mask_mode == "soft":
-                idx0, idx1 = torch.triu_indices(
-                    seq_len + 1, seq_len + 1, offset=2
-                ).unbind()
-                masked_data = tree_mask[:, idx0, idx1]
-                masked_data = masked_data.softmax(-1)
-                tree_mask[:, idx0, idx1] = masked_data
-            elif self.mask_mode == "hard":
-                tree_mask = tree_mask > 0
+        tree_mask = self.get_pretrained_tree_mask(words)
 
         result = self.pcfg(
             self.rules,
@@ -92,16 +59,7 @@ class SplitPFTNPCFG(PFTNPCFG):
         rule_update=False,
         **kwargs,
     ):
-        if rule_update:
-            need_update = True
-        else:
-            if hasattr(self, "rules"):
-                need_update = False
-            else:
-                need_update = True
-
-        if need_update:
-            self.rules = self.forward()
+        self.check_rule_update(rule_update)
 
         if decode_type == "viterbi":
             if not hasattr(self, "viterbi_pcfg"):
@@ -111,26 +69,6 @@ class SplitPFTNPCFG(PFTNPCFG):
         n_words = self.split_unknown(input["word"], pos)
         rules = self.batchify(self.rules, n_words)
 
-        if decode_type == "viterbi":
-            result = self.viterbi_pcfg(
-                rules,
-                rules["unary"],
-                lens=input["seq_len"],
-                viterbi=True,
-                mbr=False,
-                label=label,
-            )
-        elif decode_type == "mbr":
-            result = self.pcfg(
-                rules,
-                rules["unary"],
-                lens=input["seq_len"],
-                viterbi=False,
-                mbr=True,
-                label=label,
-            )
-        else:
-            raise NotImplementedError
-
+        result = self.decode(rules, input["seq_len"], decode_type, label)
         result.update({"word": n_words})
         return result

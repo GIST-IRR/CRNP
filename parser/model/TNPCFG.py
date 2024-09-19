@@ -4,13 +4,13 @@ from ..model.PCFG_module import (
     PCFG_module,
     Term_parameterizer,
     Root_parameterizer,
+    UnaryRule_parameterizer,
 )
 from ..model.NeuralPCFG import NeuralPCFG
 
 from ..pfs.td_partition_function import TDPartitionFunction
 from ..pcfgs.pcfg import PCFG
 from ..pcfgs.tdpcfg import TDPCFG
-from torch.distributions.utils import logits_to_probs
 
 
 class Nonterm_parameterizer(PCFG_module):
@@ -48,7 +48,7 @@ class Nonterm_parameterizer(PCFG_module):
         )
 
         if self.rank_proj:
-            self.rank_proj_mlp = nn.Linear(self.dim, self.r, bias=False)
+            self.rank_proj = nn.Linear(self.dim, self.r, bias=False)
         else:
             for l in [self.parent_mlp, self.left_mlp, self.right_mlp]:
                 l.append(nn.Linear(self.dim, self.r))
@@ -60,9 +60,9 @@ class Nonterm_parameterizer(PCFG_module):
         right = self.right_mlp(rule_state_emb)
 
         if self.rank_proj:
-            head = self.rank_proj_mlp(head)
-            left = self.rank_proj_mlp(left)
-            right = self.rank_proj_mlp(right)
+            head = self.rank_proj(head)
+            left = self.rank_proj(left)
+            right = self.rank_proj(right)
 
         if softmax == "log":
             head = head.log_softmax(-1)
@@ -85,25 +85,20 @@ class TNPCFG(NeuralPCFG):
         super()._set_arguments(args)
         self.r = getattr(args, "r_dim", 1000)
         self.word_emb_size = getattr(args, "word_emb_size", 200)
-        self.embedding_sharing = getattr(args, "embedding_sharing", False)
         self.rank_proj = getattr(args, "rank_proj", False)
 
     def _init_grammar(self):
-        if self.embedding_sharing:
-            print("embedding sharing")
-            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
-            self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
-        else:
-            self.nonterm_emb = None
-            self.term_emb = None
+        self._embedding_sharing()
         # terms
-        self.terms = Term_parameterizer(
+        self.terms = UnaryRule_parameterizer(
             self.s_dim,
             self.T,
             self.V,
             activation=self.activation,
             norm=self.norm,
             term_emb=self.term_emb,
+            mlp_mode=self.mlp_mode,
+            temp=self.cos_temp,
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -115,12 +110,15 @@ class TNPCFG(NeuralPCFG):
             rank_proj=self.rank_proj,
         )
         # root
-        self.root = Root_parameterizer(
+        self.root = UnaryRule_parameterizer(
             self.s_dim,
+            1,
             self.NT,
             activation=self.activation,
             norm=self.norm,
             nonterm_emb=self.nonterm_emb,
+            mlp_mode=self.mlp_mode,
+            temp=self.cos_temp,
         )
 
     def rules_similarity(self, unary=None):
@@ -138,33 +136,6 @@ class TNPCFG(NeuralPCFG):
             "cos_term": tcs,
             "log_cos_term": log_tcs,
         }
-
-    @torch.no_grad()
-    def entropy_rules(self, batch=False, probs=False, reduce="none"):
-        head = self.rules["head"][0]
-        left = self.rules["left"][0]
-        right = self.rules["right"][0]
-
-        head = head[:, None, None, :]
-        left = left.unsqueeze(1)
-        right = right.unsqueeze(0)
-        ents = head.new_zeros(self.NT)
-        for i, h in enumerate(head):
-            t = (left + right + h).logsumexp(-1).reshape(-1)
-            ent = logits_to_probs(t) * t
-            ent = -ent.sum()
-            ents[i] = ent
-
-        if reduce == "mean":
-            ents = ents.mean(-1)
-        elif reduce == "sum":
-            ents = ents.sum(-1)
-
-        if probs:
-            emax = 2 * self.max_entropy(self.NT + self.T)
-            ents = (emax - ents) / emax
-
-        return ents
 
     def compose(self, rules):
         head = rules["head"]
@@ -241,14 +212,14 @@ class TNPCFG(NeuralPCFG):
     def loss(self, input, partition=False, soft=False, label=False, **kwargs):
         words = input["word"]
         self.rules = self.forward()
-        self.rules = self.batchify(self.rules, words)
+        rules = self.batchify(self.rules, words)
 
         result = self.pcfg(
-            self.rules, self.rules["unary"], lens=input["seq_len"], label=label
+            rules, rules["unary"], lens=input["seq_len"], label=label
         )
         # Partition function
         if partition:
-            self.pf = self.part(self.rules, input["seq_len"], mode=self.mode)
+            self.pf = self.part(rules, input["seq_len"], mode=self.mode)
             if soft:
                 return -result["partition"].mean(), self.pf.mean()
             result["partition"] = result["partition"] - self.pf
@@ -263,49 +234,14 @@ class TNPCFG(NeuralPCFG):
         rule_update=False,
         **kwargs
     ):
-        if rule_update:
-            need_update = True
-        else:
-            if hasattr(self, "rules"):
-                need_update = False
-            else:
-                need_update = True
-
-        if need_update:
-            self.rules = self.forward()
+        self.check_rule_update(rule_update)
 
         if decode_type == "viterbi":
-            if not hasattr(self, "viterbi_pcfg"):
-                self.viterbi_pcfg = PCFG()
+            if not isinstance(self.pcfg, PCFG):
+                self.pcfg = PCFG()
                 self.rules = self.compose(self.rules)
 
         rules = self.batchify(self.rules, input["word"])
-
-        if decode_type == "viterbi":
-            result = self.viterbi_pcfg(
-                rules,
-                rules["unary"],
-                lens=input["seq_len"],
-                viterbi=True,
-                mbr=False,
-                label=label,
-            )
-        elif decode_type == "mbr":
-            result = self.pcfg(
-                rules,
-                rules["unary"],
-                lens=input["seq_len"],
-                viterbi=False,
-                mbr=True,
-                label=label,
-            )
-        else:
-            raise NotImplementedError
-
-        # if depth > 0:
-        #     result["depth"] = self.part(
-        #         rules, depth, mode="length", depth_output="full"
-        #     )
-        #     result["depth"] = result["depth"].exp()
+        result = self.decode(rules, input["seq_len"], decode_type, label)
 
         return result

@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn as nn
 
 from parser.pfs.partition_function import PartitionFunction
 from ..pcfgs.pcfg import PCFG
@@ -8,6 +9,7 @@ from .PCFG_module import (
     Term_parameterizer,
     Nonterm_parameterizer,
     Root_parameterizer,
+    UnaryRule_parameterizer,
 )
 
 
@@ -38,22 +40,54 @@ class NeuralPCFG(PCFG_module):
         self.activation = getattr(args, "activation", "relu")
         self.norm = getattr(args, "norm", None)
 
+        self.embedding_sharing = getattr(args, "embedding_sharing", False)
+        self.mlp_mode = getattr(args, "mlp_mode", "standard")
+        self.cos_temp = getattr(args, "cos_temp", 1)
+
         # Partition function
         self.mode = getattr(args, "mode", "length_unary")
 
+    def _embedding_sharing(self):
+        if self.embedding_sharing:
+            print("embedding sharing")
+            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
+            self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
+        else:
+            self.nonterm_emb = None
+            self.term_emb = None
+
     def _init_grammar(self):
-        self.terms = Term_parameterizer(
+        self._embedding_sharing()
+        # terms
+        self.terms = UnaryRule_parameterizer(
             self.s_dim,
             self.T,
             self.V,
             activation=self.activation,
             norm=self.norm,
+            parent_emb=self.term_emb,
+            mlp_mode=self.mlp_mode,
+            temp=self.cos_temp,
         )
         self.nonterms = Nonterm_parameterizer(
-            self.s_dim, self.NT, self.T, norm=self.norm
+            self.s_dim,
+            self.NT,
+            self.T,
+            nonterm_emb=self.nonterm_emb,
+            term_emb=self.term_emb,
+            mlp_mode=self.mlp_mode,
+            temp=self.cos_temp,
         )
-        self.root = Root_parameterizer(
-            self.s_dim, self.NT, activation=self.activation, norm=self.norm
+        # root
+        self.root = UnaryRule_parameterizer(
+            self.s_dim,
+            1,
+            self.NT,
+            activation=self.activation,
+            norm=self.norm,
+            child_emb=self.nonterm_emb,
+            mlp_mode=self.mlp_mode,
+            temp=self.cos_temp,
         )
 
     def update_dropout(self, rate):
@@ -132,7 +166,7 @@ class NeuralPCFG(PCFG_module):
     @property
     def rules(self):
         if getattr(self, "_rules", None) is None:
-            self._rules = self.forward({"word": torch.zeros([1, 1])})
+            self._rules = self.forward()
         return self._rules
 
     @rules.setter
@@ -209,9 +243,7 @@ class NeuralPCFG(PCFG_module):
                 self.rules, lens=input["seq_len"], mode=self.mode
             )
             if soft:
-                return (-result["partition"]), self.pf
-                # return (-sent["partition"]), self.pf
-            # result["partition"] = result["partition"] - sent["partition"]
+                return -result["partition"].mean(), self.pf.mean()
             result["partition"] = result["partition"] - self.pf
         else:
             result = self.pcfg(
@@ -223,39 +255,58 @@ class NeuralPCFG(PCFG_module):
 
         return -result["partition"]
 
-    def evaluate(self, input, decode_type, depth=0, label=False, **kwargs):
-        self.rules = self.forward()
-        self.rules = self.batchify(self.rules, input["word"])
+    def check_rule_update(self, rule_update):
+        if rule_update:
+            need_update = True
+        else:
+            if hasattr(self, "rules"):
+                need_update = False
+            else:
+                need_update = True
 
-        lens = input["seq_len"]
+        if need_update:
+            self.rules = self.forward()
 
+    def decode(self, rules, lens, decode_type, label=False):
         if decode_type == "viterbi":
             result = self.pcfg(
-                self.rules,
-                self.rules["unary"],
+                rules,
+                rules["unary"],
                 lens=lens,
                 viterbi=True,
                 mbr=False,
-                dropout=self.dropout,
                 label=label,
             )
         elif decode_type == "mbr":
             result = self.pcfg(
-                self.rules,
-                self.rules["unary"],
+                rules,
+                rules["unary"],
                 lens=lens,
                 viterbi=False,
                 mbr=True,
-                dropout=self.dropout,
                 label=label,
             )
         else:
             raise NotImplementedError
+        return result
 
-        if depth > 0:
-            result["depth"] = self.part(
-                self.rules, depth, mode="length", depth_output="full"
-            )
-            result["depth"] = result["depth"].exp()
+    def evaluate(
+        self,
+        input,
+        decode_type="mbr",
+        depth=0,
+        label=False,
+        rule_update=False,
+        **kwargs
+    ):
+        self.check_rule_update(rule_update)
+        rules = self.batchify(self.rules, input["word"])
+        result = self.decode(rules, input["seq_len"], decode_type, label)
+
+        # if depth > 0:
+        #     result["depth"] = self.part(
+        #         self.rules, depth, mode="length", depth_output="full"
+        #     )
+        #     result["depth"] = result["depth"].exp()
 
         return result

@@ -3,14 +3,92 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dist
+from torch.nn.utils.parametrizations import _Orthogonal
 
-from ..modules.res import ResLayer, ResLayerNorm
+from ..modules.res import ResLayer
 
 import math
-import numpy as np
 
 
-class Term_parameterizer(nn.Module):
+class UnaryRule_parameterizer(nn.Module):
+    def __init__(
+        self,
+        dim,
+        n_parent,
+        n_child,
+        activation="relu",
+        parent_emb=None,
+        child_emb=None,
+        orthogonal=False,
+        mlp_mode="standard",
+        softmax=True,
+        norm=None,
+        temp=1,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.n_parent = n_parent
+        self.n_child = n_child
+
+        self.softmax = softmax
+        self.mlp_mode = mlp_mode
+        self.temp = temp
+
+        if parent_emb is None:
+            self.parent_emb = nn.Parameter(
+                torch.randn(self.n_parent, self.dim)
+            )
+        else:
+            self.parent_emb = parent_emb
+
+        if child_emb is None:
+            self.child_emb = nn.Parameter(torch.randn(self.n_child, self.dim))
+        else:
+            self.child_emb = child_emb
+
+        if orthogonal:
+            self.orth = _Orthogonal()
+
+        if mlp_mode == "standard":
+            self.rule_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                ResLayer(self.dim, self.dim, activation=activation),
+                ResLayer(self.dim, self.dim, activation=activation),
+                nn.Linear(self.dim, self.n_child),
+            )
+        elif mlp_mode == "single":
+            self.rule_mlp = nn.Linear(self.dim, self.n_child, bias=False)
+        elif mlp_mode == "cosine similarity":
+            self.rule_mlp = nn.CosineSimilarity(dim=-1)
+
+        if mlp_mode != "cosine similarity" and child_emb is not None:
+            self.rule_mlp[-1].weight = child_emb
+
+        if norm == "batch":
+            self.norm = nn.BatchNorm1d(self.n_child)
+        elif norm == "layer":
+            self.norm = nn.LayerNorm(self.n_child)
+        else:
+            self.register_parameter("norm", None)
+
+    def forward(self):
+        if self.mlp_mode == "cosine similarity":
+            rule_prob = self.rule_mlp(
+                self.parent_emb.unsqueeze(1), self.child_emb.unsqueeze(0)
+            )
+            rule_prob = rule_prob * self.temp
+        else:
+            rule_prob = self.rule_mlp(self.parent_emb)
+
+        if self.norm is not None:
+            rule_prob = self.norm(rule_prob)
+
+        if self.softmax:
+            rule_prob = rule_prob.log_softmax(-1)
+        return rule_prob
+
+
+class Term_parameterizer(UnaryRule_parameterizer):
     def __init__(
         self,
         dim,
@@ -19,47 +97,25 @@ class Term_parameterizer(nn.Module):
         activation="relu",
         term_emb=None,
         word_emb=None,
+        orthogonal=False,
+        mlp_mode="standard",
         softmax=True,
         norm=None,
+        temp=1,
     ):
-        super().__init__()
-        self.dim = dim
-        self.T = T
-        self.V = V
-
-        self.softmax = softmax
-
-        if term_emb is None:
-            self.term_emb = nn.Parameter(torch.randn(self.T, self.dim))
-        else:
-            self.term_emb = term_emb
-
-        self.term_mlp = nn.Sequential(
-            nn.Linear(self.dim, self.dim),
-            ResLayer(self.dim, self.dim, activation=activation),
-            ResLayer(self.dim, self.dim, activation=activation),
-            nn.Linear(self.dim, self.V),
+        super(Term_parameterizer, self).__init__(
+            dim=dim,
+            n_parent=T,
+            n_child=V,
+            activation=activation,
+            parent_emb=term_emb,
+            child_emb=word_emb,
+            orthogonal=orthogonal,
+            mlp_mode=mlp_mode,
+            softmax=softmax,
+            norm=norm,
+            temp=temp,
         )
-
-        if word_emb is not None:
-            self.term_mlp[-1].weight = word_emb
-
-        if norm == "batch":
-            self.norm = nn.BatchNorm1d(self.V)
-        elif norm == "layer":
-            self.norm = nn.LayerNorm(self.V)
-        else:
-            self.register_parameter("norm", None)
-
-    def forward(self):
-        term_prob = self.term_mlp(self.term_emb)
-
-        if self.norm is not None:
-            term_prob = self.norm(term_prob)
-
-        if self.softmax:
-            term_prob = term_prob.log_softmax(-1)
-        return term_prob
 
 
 class Nonterm_parameterizer(nn.Module):
@@ -71,9 +127,12 @@ class Nonterm_parameterizer(nn.Module):
         temperature=1.0,
         nonterm_emb=None,
         term_emb=None,
+        mlp_mode="standard",
+        compose_fn="linear",
         no_rule_layer=False,
         softmax=True,
         norm=None,
+        temp=1,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -84,6 +143,9 @@ class Nonterm_parameterizer(nn.Module):
         self.softmax = softmax
 
         self.temperature = temperature
+
+        self.mlp_mode = mlp_mode
+        self.temp = temp
 
         if nonterm_emb is None:
             self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.dim))
@@ -96,7 +158,20 @@ class Nonterm_parameterizer(nn.Module):
             self.term_emb = term_emb
 
         if not no_rule_layer:
-            self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
+            if mlp_mode == "standard":
+                self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
+                self.register_parameter("children_compose", None)
+            elif mlp_mode == "cosine similarity":
+                self.rule_mlp = nn.CosineSimilarity(dim=-1)
+                if compose_fn == "linear":
+                    self.children_compose = nn.Linear(self.dim * 2, self.dim)
+                elif compose_fn == "mlp":
+                    self.children_compose = nn.Sequential(
+                        nn.Linear(self.dim * 2, self.dim),
+                        nn.ReLU(),
+                        nn.Linear(self.dim, self.dim),
+                    )
+
         else:
             self.register_parameter("rule_mlp", None)
 
@@ -108,7 +183,24 @@ class Nonterm_parameterizer(nn.Module):
             self.register_parameter("norm", None)
 
     def forward(self, reshape=False):
-        nonterm_prob = self.rule_mlp(self.nonterm_emb)
+        if self.mlp_mode == "cosine similarity":
+            children_emb = torch.cat([self.nonterm_emb, self.term_emb])
+            children_emb = torch.cat(
+                [
+                    children_emb.unsqueeze(1).expand(-1, self.NT_T, -1),
+                    children_emb.unsqueeze(0).expand(self.NT_T, -1, -1),
+                ],
+                dim=2,
+            )
+            children_emb = self.children_compose(children_emb)
+            nonterm_prob = self.rule_mlp(
+                self.nonterm_emb[:, None, None, ...],
+                children_emb[None, ...],
+            )
+            nonterm_prob = nonterm_prob * self.temp
+            nonterm_prob = nonterm_prob.reshape(-1, self.NT_T**2)
+        else:
+            nonterm_prob = self.rule_mlp(self.nonterm_emb)
 
         if self.norm is not None:
             nonterm_prob = self.norm(nonterm_prob)
@@ -123,54 +215,34 @@ class Nonterm_parameterizer(nn.Module):
         return nonterm_prob
 
 
-class Root_parameterizer(nn.Module):
+class Root_parameterizer(UnaryRule_parameterizer):
     def __init__(
         self,
         dim,
+        ROOT,
         NT,
         root_emb=None,
         nonterm_emb=None,
+        orthogonal=False,
+        mlp_mode="standard",
         activation="relu",
         softmax=True,
         norm=None,
+        temp=1,
     ):
-        super().__init__()
-        self.dim = dim
-        self.NT = NT
-
-        self.softmax = softmax
-
-        if root_emb is None:
-            self.root_emb = nn.Parameter(torch.randn(1, self.dim))
-        else:
-            self.root_emb = root_emb
-
-        self.root_mlp = nn.Sequential(
-            nn.Linear(self.dim, self.dim),
-            ResLayer(self.dim, self.dim, activation=activation),
-            ResLayer(self.dim, self.dim, activation=activation),
-            nn.Linear(self.dim, self.NT),
+        super(Root_parameterizer, self).__init__(
+            dim=dim,
+            n_parent=ROOT,
+            n_child=NT,
+            activation=activation,
+            parent_emb=root_emb,
+            child_emb=nonterm_emb,
+            orthogonal=orthogonal,
+            mlp_mode=mlp_mode,
+            softmax=softmax,
+            norm=norm,
+            temp=temp,
         )
-
-        if nonterm_emb is not None:
-            self.root_mlp[-1].weight = nonterm_emb
-
-        if norm == "batch":
-            self.norm = nn.BatchNorm1d(self.NT)
-        elif norm == "layer":
-            self.norm = nn.LayerNorm(self.NT)
-        else:
-            self.register_parameter("norm", None)
-
-    def forward(self):
-        root_prob = self.root_mlp(self.root_emb)
-
-        if self.norm is not None:
-            root_prob = self.norm(root_prob)
-
-        if self.softmax:
-            root_prob = root_prob.log_softmax(-1)
-        return root_prob
 
 
 class PCFG_module(nn.Module):

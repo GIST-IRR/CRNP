@@ -1,26 +1,20 @@
 import torch
 
+from ..model.NeuralPCFG import NeuralPCFG
 from ..model.FTNPCFG import FTNPCFG
 
 from collections import defaultdict
 
 
-class PFTNPCFG(FTNPCFG):
-    """Parse focused FTN-PCFG"""
-
-    def __init__(self, args):
-        super(PFTNPCFG, self).__init__(args)
-
+class Parse_Focusing(NeuralPCFG):
+    def _setup_parse_focusing(self, args):
+        self.mask_mode = getattr(args, "mask_mode", "soft")
         if not getattr(args, "eval_mode", False):
             self.pretrained_models = getattr(args, "pretrained_models", None)
             if self.pretrained_models is not None:
                 self.parse_trees = self.prepare_trees(self.pretrained_models)
             else:
                 self.parse_trees = []
-
-    def _set_arguments(self, args):
-        super()._set_arguments(args)
-        self.mask_mode = getattr(args, "mask_mode", "soft")
 
     def prepare_trees(self, model_paths):
         parse_trees = []
@@ -40,11 +34,11 @@ class PFTNPCFG(FTNPCFG):
             parse_trees.append(parses)
         return parse_trees
 
-    def loss(self, input, partition=False, soft=False, label=False, **kwargs):
-        words = input["word"]
+    def get_pretrained_tree_mask(self, words):
         b, seq_len = words.shape[:2]
 
         trees = None
+        tree_mask = None
 
         if self.pretrained_models:
             trees = []
@@ -77,13 +71,28 @@ class PFTNPCFG(FTNPCFG):
             elif self.mask_mode == "hard":
                 tree_mask = tree_mask > 0
 
+        return tree_mask
+
+    def loss(self, input, partition=False, soft=False, label=False, **kwargs):
+        words = input["word"]
+
+        tree_mask = self.get_pretrained_tree_mask(words)
+
         self.rules = self.forward()
-        self.rules = self.batchify(self.rules, words)
+        rules = self.batchify(self.rules, words)
 
         result = self.pcfg(
-            self.rules,
-            self.rules["unary"],
+            rules,
+            rules["unary"],
             lens=input["seq_len"],
             tree=tree_mask,
         )
         return -result["partition"].mean()
+
+
+class PFTNPCFG(Parse_Focusing, FTNPCFG):
+    """Parse focused FTN-PCFG"""
+
+    def __init__(self, args):
+        super(PFTNPCFG, self).__init__(args)
+        self._setup_parse_focusing(args)

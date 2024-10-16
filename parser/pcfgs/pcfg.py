@@ -675,39 +675,58 @@ class PCFG(PCFG_base):
         for w in range(2, N):
             n = N - w
 
+            if tree is not None:
+                child_mask = (
+                    tree[:, torch.arange(n), torch.arange(n) + w] + 1e-9
+                )
+                child_mask = child_mask.log()
+                if child_mask.dim() == 2:
+                    child_mask = child_mask[..., None]
+
             Y_term = terms[:, :n, :, None]
             Z_term = terms[:, w - 1 :, None, :]
 
             # width_tree = [[s for s in b if s.diff() == w] for b in tree]
-            width_idx = terms.new_ones(batch * n).bool()
-            ts = [
-                s[0].item() + i * n
-                for i, b in enumerate(tree)
-                for s in b
-                if s.diff() == w
-            ]
-            width_idx[ts] = False
-            width_idx = width_idx.reshape(batch, n, 1, 1)
+            # width_idx = terms.new_ones(batch * n).bool()
+            # ts = [
+            #     s[0].item() + i * n
+            #     for i, b in enumerate(tree)
+            #     for s in b
+            #     if s.diff() == w
+            # ]
+            # width_idx[ts] = False
+            # width_idx = width_idx.reshape(batch, n, 1, 1)
 
-            Y_term = Y_term.masked_fill(width_idx, -1e9)
-            Z_term = Z_term.masked_fill(width_idx, -1e9)
+            # Y_term = Y_term.masked_fill(width_idx, -1e9)
+            # Z_term = Z_term.masked_fill(width_idx, -1e9)
 
             if w == 2:
-                # diagonal_copy_(s, Xyz(Y_term, Z_term, X_y_z) + span_indicator[:, torch.arange(n), torch.arange(n) + w].unsqueeze(-1), w)
-                diagonal_copy_(
-                    s,
-                    Xyz(Y_term, Z_term, X_y_z)
-                    + span_indicator[:, torch.arange(n), torch.arange(n) + w],
-                    w,
-                )
+                if tree is not None:
+                    diagonal_copy_(
+                        s,
+                        (Xyz(Y_term, Z_term, X_y_z) + child_mask)
+                        + span_indicator[
+                            :, torch.arange(n), torch.arange(n) + w
+                        ],
+                        w,
+                    )
+                else:
+                    diagonal_copy_(
+                        s,
+                        Xyz(Y_term, Z_term, X_y_z)
+                        + span_indicator[
+                            :, torch.arange(n), torch.arange(n) + w
+                        ],
+                        w,
+                    )
                 continue
 
             x = terms.new_zeros(3, batch, n, NT).fill_(-1e9)
 
             Y = stripe(s, n, w - 1, (0, 1)).clone()
             Z = stripe(s, n, w - 1, (1, w), 0).clone()
-            Y = Y.masked_fill(width_idx, -1e9)
-            Z = Z.masked_fill(width_idx, -1e9)
+            # Y = Y.masked_fill(width_idx, -1e9)
+            # Z = Z.masked_fill(width_idx, -1e9)
 
             if w > 3:
                 x[0].copy_(XYZ(Y, Z, X_Y_Z))
@@ -715,13 +734,28 @@ class PCFG(PCFG_base):
             x[1].copy_(XYz(Y, Z_term, X_Y_z))
             x[2].copy_(XyZ(Y_term, Z, X_y_Z))
 
+            if tree is not None:
+                diagonal_copy_(
+                    s,
+                    (contract(x, dim=0) + child_mask)
+                    + span_indicator[:, torch.arange(n), torch.arange(n) + w],
+                    w,
+                )
+            else:
+                diagonal_copy_(
+                    s,
+                    contract(x, dim=0)
+                    + span_indicator[:, torch.arange(n), torch.arange(n) + w],
+                    w,
+                )
+
             # diagonal_copy_(s, contract(x, dim=0) + span_indicator[:, torch.arange(n), torch.arange(n) + w].unsqueeze(-1), w)
-            diagonal_copy_(
-                s,
-                contract(x, dim=0)
-                + span_indicator[:, torch.arange(n), torch.arange(n) + w],
-                w,
-            )
+            # diagonal_copy_(
+            #     s,
+            #     contract(x, dim=0)
+            #     + span_indicator[:, torch.arange(n), torch.arange(n) + w],
+            #     w,
+            # )
 
         logZ = contract(s[torch.arange(batch), 0, lens] + root)
 
@@ -1037,11 +1071,7 @@ class Faster_PCFG(PCFG_base):
         for w in range(2, N):
             n = N - w
 
-            Y_term = terms[
-                :,
-                :n,
-                :,
-            ]
+            Y_term = terms[:, :n, :]
             Z_term = terms[:, w - 1 :, :]
 
             if w == 2:

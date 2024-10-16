@@ -73,13 +73,22 @@ class Parse_Focusing(NeuralPCFG):
 
         return tree_mask
 
-    def loss(self, input, partition=False, soft=False, label=False, **kwargs):
+    def loss(
+        self,
+        input,
+        partition=False,
+        soft=False,
+        label=False,
+        reduction="mean",
+        **kwargs
+    ):
         words = input["word"]
 
         tree_mask = self.get_pretrained_tree_mask(words)
 
-        self.rules = self.forward()
+        self.rules = self.forward(input)
         rules = self.batchify(self.rules, words)
+        self.rules["word"] = input["word"]
 
         result = self.pcfg(
             rules,
@@ -87,7 +96,12 @@ class Parse_Focusing(NeuralPCFG):
             lens=input["seq_len"],
             tree=tree_mask,
         )
-        return -result["partition"].mean()
+
+        if reduction == "mean":
+            res = -result["partition"].mean()
+        elif reduction == None:
+            res = -result["partition"]
+        return res
 
 
 class PFTNPCFG(Parse_Focusing, FTNPCFG):

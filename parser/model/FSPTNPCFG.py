@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 from .PFTNPCFG import Parse_Focusing
@@ -19,10 +20,17 @@ class FSPTNPCFG(Parse_Focusing, FNPCFG):
         loss = super().loss(
             input, partition=partition, soft=soft, label=label, **kwargs
         )
-        sim = self.sim(
+        nt_sim = self.sim(
             self.nonterm_emb.unsqueeze(1), self.nonterm_emb.unsqueeze(0)
         )
-        return loss + sim.abs().mean()
+        t_sim = self.sim(
+            self.term_emb.unsqueeze(1), self.term_emb.unsqueeze(0)
+        )
+        nt_sim = nt_sim.square().sqrt().mean()
+        t_sim = t_sim.square().sqrt().mean()
+
+        return loss + nt_sim + t_sim
+        # return loss
 
     @property
     def root_emb(self):

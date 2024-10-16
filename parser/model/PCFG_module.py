@@ -16,6 +16,7 @@ class UnaryRule_parameterizer(nn.Module):
         dim,
         n_parent,
         n_child,
+        h_dim=None,
         activation="relu",
         parent_emb=None,
         child_emb=None,
@@ -27,6 +28,7 @@ class UnaryRule_parameterizer(nn.Module):
     ):
         super().__init__()
         self.dim = dim
+        self.h_dim = h_dim if h_dim is not None else dim
         self.n_parent = n_parent
         self.n_child = n_child
 
@@ -36,13 +38,15 @@ class UnaryRule_parameterizer(nn.Module):
 
         if parent_emb is None:
             self.parent_emb = nn.Parameter(
-                torch.randn(self.n_parent, self.dim)
+                torch.randn(self.n_parent, self.h_dim)
             )
         else:
             self.parent_emb = parent_emb
 
         if child_emb is None:
-            self.child_emb = nn.Parameter(torch.randn(self.n_child, self.dim))
+            self.child_emb = nn.Parameter(
+                torch.randn(self.n_child, self.h_dim)
+            )
         else:
             self.child_emb = child_emb
 
@@ -51,15 +55,17 @@ class UnaryRule_parameterizer(nn.Module):
 
         if mlp_mode == "standard":
             self.rule_mlp = nn.Sequential(
-                nn.Linear(self.dim, self.dim),
-                ResLayer(self.dim, self.dim, activation=activation),
-                ResLayer(self.dim, self.dim, activation=activation),
-                nn.Linear(self.dim, self.n_child),
+                nn.Linear(self.dim, self.h_dim),
+                ResLayer(self.h_dim, self.h_dim, activation=activation),
+                ResLayer(self.h_dim, self.h_dim, activation=activation),
+                nn.Linear(self.h_dim, self.n_child),
             )
         elif mlp_mode == "single":
             self.rule_mlp = nn.Linear(self.dim, self.n_child, bias=False)
         elif mlp_mode == "cosine similarity":
             self.rule_mlp = nn.CosineSimilarity(dim=-1)
+        elif mlp_mode == None:
+            self.register_module("rule_mlp", None)
 
         if mlp_mode != "cosine similarity" and child_emb is not None:
             self.rule_mlp[-1].weight = child_emb
@@ -94,6 +100,7 @@ class Term_parameterizer(UnaryRule_parameterizer):
         dim,
         T,
         V,
+        h_dim=None,
         activation="relu",
         term_emb=None,
         word_emb=None,
@@ -107,6 +114,7 @@ class Term_parameterizer(UnaryRule_parameterizer):
             dim=dim,
             n_parent=T,
             n_child=V,
+            h_dim=h_dim,
             activation=activation,
             parent_emb=term_emb,
             child_emb=word_emb,
@@ -124,6 +132,7 @@ class Nonterm_parameterizer(nn.Module):
         dim,
         NT,
         T,
+        h_dim=None,
         temperature=1.0,
         nonterm_emb=None,
         term_emb=None,
@@ -136,6 +145,7 @@ class Nonterm_parameterizer(nn.Module):
     ) -> None:
         super().__init__()
         self.dim = dim
+        self.h_dim = h_dim if h_dim is not None else dim
         self.NT = NT
         self.T = T
         self.NT_T = self.NT + self.T
@@ -148,12 +158,12 @@ class Nonterm_parameterizer(nn.Module):
         self.temp = temp
 
         if nonterm_emb is None:
-            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.dim))
+            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.h_dim))
         else:
             self.nonterm_emb = nonterm_emb
 
         if term_emb is None:
-            self.term_emb = nn.Parameter(torch.randn(self.T, self.dim))
+            self.term_emb = nn.Parameter(torch.randn(self.T, self.h_dim))
         else:
             self.term_emb = term_emb
 
@@ -171,6 +181,8 @@ class Nonterm_parameterizer(nn.Module):
                         nn.ReLU(),
                         nn.Linear(self.dim, self.dim),
                     )
+            elif mlp_mode == None:
+                self.register_module("rule_mlp", None)
 
         else:
             self.register_parameter("rule_mlp", None)
@@ -221,6 +233,7 @@ class Root_parameterizer(UnaryRule_parameterizer):
         dim,
         ROOT,
         NT,
+        h_dim=None,
         root_emb=None,
         nonterm_emb=None,
         orthogonal=False,
@@ -234,6 +247,7 @@ class Root_parameterizer(UnaryRule_parameterizer):
             dim=dim,
             n_parent=ROOT,
             n_child=NT,
+            h_dim=h_dim,
             activation=activation,
             parent_emb=root_emb,
             child_emb=nonterm_emb,

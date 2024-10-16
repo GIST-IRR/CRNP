@@ -96,7 +96,7 @@ class TNPCFG(NeuralPCFG):
             self.V,
             activation=self.activation,
             norm=self.norm,
-            term_emb=self.term_emb,
+            parent_emb=self.term_emb,
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
         )
@@ -116,7 +116,7 @@ class TNPCFG(NeuralPCFG):
             self.NT,
             activation=self.activation,
             norm=self.norm,
-            nonterm_emb=self.nonterm_emb,
+            child_emb=self.nonterm_emb,
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
         )

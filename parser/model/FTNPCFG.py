@@ -8,7 +8,7 @@ class FTNPCFG(TNPCFG):
         super(FTNPCFG, self).__init__(args)
         self.pcfg = Fastest_TDPCFG()
 
-    def forward(self, **kwargs):
+    def forward(self, input=None, **kwargs):
         root = self.root()
         unary = self.terms()
         head, left, right = self.nonterms(softmax="softmax")

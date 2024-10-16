@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from nltk import Tree
+from nltk.grammar import Nonterminal
 
 from parser.pfs.partition_function import PartitionFunction
 from ..pcfgs.pcfg import PCFG
@@ -173,7 +175,7 @@ class NeuralPCFG(PCFG_module):
     def rules(self, rule):
         self._rules = rule
 
-    def forward(self):
+    def forward(self, input=None):
         # Root
         root = self.root()
         # Rule
@@ -231,7 +233,7 @@ class NeuralPCFG(PCFG_module):
         words = input["word"]
 
         # Calculate rule distributions
-        self.rules = self.forward()
+        self.rules = self.forward(input)
         self.rules = self.batchify(self.rules, words)
         self.rules["word"] = input["word"]
 
@@ -310,3 +312,25 @@ class NeuralPCFG(PCFG_module):
         #     result["depth"] = result["depth"].exp()
 
         return result
+
+    def calculate_tree_probability(self, tree: Tree, rule_update=False):
+        self.check_rule_update(rule_update)
+        rules = self.batchify(self.rules, input)
+
+        def label_to_idx(label: Nonterminal):
+            if isinstance(label, Nonterminal):
+                return label.symbol().replace("'", "").split("-")[1]
+            else:
+                return label
+
+        prod = tree.productions()
+        prob = 1
+        for p in prod:
+            parent = label_to_idx(p.lhs())
+
+            if len(p.rhs()) == 1:
+                left_child = label_to_idx(p.rhs()[0])
+            elif len(p.rhs()) == 2:
+                left_child, right_child = list(map(label_to_idx, p.rhs()))
+            else:
+                raise "Only binary or unary rules can be calculated."

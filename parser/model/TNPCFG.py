@@ -153,7 +153,7 @@ class TNPCFG(NeuralPCFG):
 
         return {"unary": unary, "root": root, "rule": rule}
 
-    def forward(self, **kwargs):
+    def forward(self, input=None, **kwargs):
         root = self.root()
         unary = self.terms()
         head, left, right = self.nonterms()

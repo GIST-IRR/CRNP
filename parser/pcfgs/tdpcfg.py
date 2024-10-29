@@ -147,6 +147,9 @@ class TDPCFG(PCFG_base):
         R_term = R[:, NT:, ...].contiguous()
         R_nonterm = R[:, :NT, ...].contiguous()
 
+        if tree is not None:
+            tree = tree.log().clamp(-1e9)
+
         @checkpoint
         def transform_left_t(x, left):
             """
@@ -210,25 +213,30 @@ class TDPCFG(PCFG_base):
             # n: the number of spans of width w.
             n = N - w
             # Parse tree selection.
-            width_idx = terms.new_ones(batch * n).bool()
-            ts = [
-                s[0].item() + i * n
-                for i, b in enumerate(tree)
-                for s in b
-                if s.diff() == w
-            ]
-            width_idx[ts] = False
-            width_idx = width_idx.reshape(batch, n, 1, 1)
+            # width_idx = terms.new_ones(batch * n).bool()
+            # ts = [
+            #     s[0].item() + i * n
+            #     for i, b in enumerate(tree)
+            #     for s in b
+            #     if s.diff() == w
+            # ]
+            # width_idx[ts] = False
+            # width_idx = width_idx.reshape(batch, n, 1, 1)
 
             Y = stripe(left_s, n, w - 1, (0, 1))
             Z = stripe(right_s, n, w - 1, (1, w), 0)
 
-            Y = Y.masked_fill(width_idx, -1e9)
-            Z = Z.masked_fill(width_idx, -1e9)
+            # Y = Y.masked_fill(width_idx, -1e9)
+            # Z = Z.masked_fill(width_idx, -1e9)
 
             x = merge(Y.clone(), Z.clone())
-            # x = x + span_indicator[:, torch.arange(n), w + torch.arange(n)].unsqueeze(-1)
             x = x + span_indicator[:, torch.arange(n), w + torch.arange(n)]
+
+            if tree is not None:
+                child_mask = tree[:, torch.arange(n), torch.arange(n) + w]
+
+                x = (x + child_mask).clamp(-1e9)
+
             if w + 1 < N:
                 left_x = transform_left_nt(x, L_nonterm)
                 right_x = transform_right_nt(x, R_nonterm)
@@ -503,8 +511,8 @@ class Fastest_TDPCFG(PCFG_base):
             if tree is not None:
                 child_mask = tree[:, torch.arange(n), torch.arange(n) + w]
 
-            x = (x * child_mask.exp().unsqueeze(-1)).clamp(-1e9)
-            x_normalizer = (x_normalizer + child_mask).clamp(-1e9)
+                x = (x * child_mask.exp().unsqueeze(-1)).clamp(-1e9)
+                x_normalizer = (x_normalizer + child_mask).clamp(-1e9)
             # x = (x * child_mask.unsqueeze(-1)).clamp(-1e9)
             # x_normalizer = (x_normalizer + child_mask.log()).clamp(-1e9)
 

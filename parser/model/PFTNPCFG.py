@@ -12,12 +12,12 @@ class Parse_Focusing(NeuralPCFG):
         if not getattr(args, "eval_mode", False):
             self.pretrained_models = getattr(args, "pretrained_models", None)
             if self.pretrained_models is not None:
-                self.parse_trees = self.prepare_trees(self.pretrained_models)
+                self.prepare_trees(self.pretrained_models)
             else:
                 self.parse_trees = []
 
     def prepare_trees(self, model_paths):
-        parse_trees = []
+        self.parse_trees = []
         for model in model_paths:
             parses = defaultdict(list)
             with open(model, "rb") as f:
@@ -31,8 +31,7 @@ class Parse_Focusing(NeuralPCFG):
                 elif "tree" in t.keys():
                     n_tree = [s[:2] for s in t["tree"] if s[1] - s[0] > 1]
                 parses[str(n_word)] = n_tree
-            parse_trees.append(parses)
-        return parse_trees
+            self.parse_trees.append(parses)
 
     def get_pretrained_tree_mask(self, words):
         b, seq_len = words.shape[:2]
@@ -52,13 +51,13 @@ class Parse_Focusing(NeuralPCFG):
             # Calculate span frequency in predicted trees
             trees = torch.stack(trees, dim=1)
             # # Concatenated mask
-            trees = trees.reshape(b, -1, 2)
+            trees = trees.reshape(b, trees.shape[1] * trees.shape[2], -1)
 
         if trees is not None:
             tree_mask = trees.new_zeros(b, seq_len + 1, seq_len + 1).float()
             for i, t in enumerate(trees):
                 for s in t:
-                    tree_mask[i, s[0], s[1]] += 1
+                    tree_mask[i, *s] += 1
 
             # Softmax mask
             if self.mask_mode == "soft":
@@ -69,7 +68,10 @@ class Parse_Focusing(NeuralPCFG):
                 masked_data = masked_data.softmax(-1)
                 tree_mask[:, idx0, idx1] = masked_data
             elif self.mask_mode == "hard":
-                tree_mask = tree_mask > 0
+                # tree_mask = tree_mask > 0
+                tree_mask = torch.where(tree_mask > 0, 1.0, 0.0001)
+            elif self.mask_mode == "hybrid":
+                tree_mask = torch.where(tree_mask > 0, tree_mask, 0.0001)
 
         return tree_mask
 
@@ -80,7 +82,7 @@ class Parse_Focusing(NeuralPCFG):
         soft=False,
         label=False,
         reduction="mean",
-        **kwargs
+        **kwargs,
     ):
         words = input["word"]
 

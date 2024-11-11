@@ -1132,6 +1132,7 @@ class Faster_PCFG(PCFG_base):
         tree=None,
         viterbi=False,
         mbr=False,
+        **kwargs,
     ):
         assert viterbi == False
 

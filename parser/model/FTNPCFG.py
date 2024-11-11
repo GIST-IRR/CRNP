@@ -1,4 +1,3 @@
-from parser.pfs.td_partition_function import TDPartitionFunction
 from ..pcfgs.tdpcfg import Fastest_TDPCFG
 from ..model.TNPCFG import TNPCFG
 

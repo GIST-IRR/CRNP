@@ -126,6 +126,7 @@ class TDPCFG(PCFG_base):
         tree=None,
         mbr=False,
         viterbi=False,
+        **kwargs,
     ):
         assert viterbi is not True
         # unary = rules['unary']
@@ -149,6 +150,9 @@ class TDPCFG(PCFG_base):
 
         if tree is not None:
             tree = tree.log().clamp(-1e9)
+            if tree.shape[-1] == S:
+                pos_tree = tree[..., NT:]
+                tree = tree[..., :NT]
 
         @checkpoint
         def transform_left_t(x, left):
@@ -197,6 +201,11 @@ class TDPCFG(PCFG_base):
         span_indicator = unary.new_zeros(batch, N, N, NT).requires_grad_(mbr)
         tag_indicator = unary.new_zeros(batch, N - 1, T).requires_grad_(mbr)
 
+        if pos_tree is not None:
+            unary = (
+                unary
+                + pos_tree[:, torch.arange(N - 1), torch.arange(N - 1) + 1]
+            ).clamp(-1e9)
         left_term = transform_left_t(unary, L_term)
         right_term = transform_right_t(unary, R_term)
 

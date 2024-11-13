@@ -72,5 +72,7 @@ class SLPFTNPCFG(Splitted_Labeled_Parse_Focusing, TNPCFG):
         super(SLPFTNPCFG, self)._set_arguments(args)
 
     def __init__(self, args):
-        super(SLPFTNPCFG, self).__init__(args)
         self._setup_parse_focusing(args)
+        args.NT = len(self.idx2nt)
+        args.T = len(self.idx2t)
+        super(SLPFTNPCFG, self).__init__(args)

@@ -1,13 +1,13 @@
 import torch
 
-from ..model.NeuralPCFG import NeuralPCFG
 from ..model.FTNPCFG import FTNPCFG
 
 from collections import defaultdict
 
 
-class Parse_Focusing(NeuralPCFG):
+class Parse_Focusing:
     def _setup_parse_focusing(self, args):
+        self.args = args
         self.mask_mode = getattr(args, "mask_mode", "soft")
         if not getattr(args, "eval_mode", False):
             self.pretrained_models = getattr(args, "pretrained_models", None)
@@ -101,6 +101,8 @@ class Parse_Focusing(NeuralPCFG):
 
         if reduction == "mean":
             res = -result["partition"].mean()
+        elif reduction == "sum":
+            res = -result["partition"].sum()
         elif reduction == None:
             res = -result["partition"]
         return res

@@ -47,15 +47,17 @@ def main(factor, input_path, output_path, vocab_path, xbar, joinChar):
             word = [vocab[w] for w in clean_word(sentence)]
 
             if (
-                factor == "left-branching"
-                or factor == "right-branching"
+                factor == "left_branching"
+                or factor == "right_branching"
                 or factor == "random"
             ):
                 length = len(sentence)
                 tree = branching(length, factor)
-            elif factor == "left-binarized" or factor == "right-binarized":
+            elif factor == "left_binarized" or factor == "right_binarized":
                 tree = deepcopy(t)
-                tree.collapse_unary(collapsePOS=True, joinChar=joinChar)
+                tree.collapse_unary(
+                    collapsePOS=True, collapseRoot=True, joinChar=joinChar
+                )
                 tree.chomsky_normal_form(
                     factor=factor.split("-")[0],
                     horzMarkov=0,
@@ -104,12 +106,12 @@ def main(factor, input_path, output_path, vocab_path, xbar, joinChar):
 
     tree_path = Path(f"parsed/{Path(output_path).stem}.txt")
     tree_path.write_text("\n".join(trees))
-    # torch.save(pts, output_path)
+    torch.save(pts, output_path)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--factor", type=str, default="right-binarized")
+    parser.add_argument("--factor", type=str, default="right_binarized")
     parser.add_argument("--vocab", type=str, default="vocab/english.vocab")
     parser.add_argument(
         "--input", type=str, default="data/data.clean/edit-english-test.txt"
@@ -117,7 +119,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=str,
-        default="trees/right-binarized-label_english_test.pt",
+        default="trees/right_binarized-label-english-test.pt",
     )
     parser.add_argument(
         "--xbar",

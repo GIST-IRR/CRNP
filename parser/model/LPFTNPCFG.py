@@ -7,6 +7,11 @@ from parser.model.PFTNPCFG import Parse_Focusing
 
 
 class Labeled_Parse_Focusing(Parse_Focusing):
+    def _setup_parse_focusing(self, args):
+        super()._setup_parse_focusing(args)
+        args.NT = len(self.idx2nt)
+        args.T = len(self.idx2t)
+
     def prepare_trees(self, model_paths):
         self.parse_trees = []
         # self.parse_labels = []
@@ -76,7 +81,7 @@ class Labeled_Parse_Focusing(Parse_Focusing):
 
         if trees is not None:
             tree_mask = trees.new_zeros(
-                b, seq_len + 1, seq_len + 1, self.NT
+                b, seq_len + 1, seq_len + 1, self.NT_T
             ).float()
             for i, t in enumerate(trees):
                 for s in t:
@@ -93,7 +98,7 @@ class Labeled_Parse_Focusing(Parse_Focusing):
                 masked_data = masked_data.softmax(-1)
                 # masked_data = masked_data / masked_data.sum(-1, keepdim=True)
                 # End
-                masked_data = masked_data.reshape(b, -1, self.NT)
+                masked_data = masked_data.reshape(b, -1, self.NT_T)
                 tree_mask[:, idx0, idx1] = masked_data
             elif self.mask_mode == "hard":
                 tree_mask = tree_mask > 0
@@ -109,5 +114,5 @@ class LPFTNPCFG(Labeled_Parse_Focusing, TNPCFG):
     """Labeled Parse-Focused TN-PCFG"""
 
     def __init__(self, args):
-        super(LPFTNPCFG, self).__init__(args)
         self._setup_parse_focusing(args)
+        super(LPFTNPCFG, self).__init__(args)

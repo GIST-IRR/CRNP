@@ -607,6 +607,11 @@ class PCFG(PCFG_base):
 
         s = terms.new_zeros(batch, N, N, NT).fill_(-1e9)
 
+        if tree is not None:
+            if tree.shape[-1] == S:
+                pos_tree = tree[..., NT:]
+                tree = tree[..., :NT]
+
         NTs = slice(0, NT)
         Ts = slice(NT, S)
 

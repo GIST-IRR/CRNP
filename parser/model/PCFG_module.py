@@ -262,28 +262,37 @@ class Root_parameterizer(UnaryRule_parameterizer):
 class PCFG_module(nn.Module):
     def __init__(self) -> None:
         super().__init__()
+        self._no_initialize = []
 
     def _initialize(self, mode="xavier_uniform", value=0.0):
         # Original Method
-        if mode == "xavier_uniform":
-            for p in self.parameters():
+        for n, p in self.named_parameters():
+            if n in self._no_initialize:
+                continue
+            if mode == "xavier_uniform":
                 if p.dim() > 1:
                     torch.nn.init.xavier_uniform_(p)
-        elif mode == "xavier_normal":
-            for p in self.parameters():
+            elif mode == "xavier_normal":
                 if p.dim() > 1:
                     torch.nn.init.xavier_normal_(p)
-        elif mode == "constant":
-            # # Init with constant 0.0009
-            for n, p in self.named_parameters():
+            elif mode == "uniform":
+                if p.dim() > 1:
+                    torch.nn.init.uniform_(p)
+            elif mode == "normal":
+                if p.dim() > 1:
+                    torch.nn.init.normal_(p)
+            elif mode == "orthogonal":
+                if p.dim() > 1:
+                    torch.nn.init.orthogonal_(p)
+            elif mode == "constant":
+                # # Init with constant 0.0009
                 n = n.split(".")[0]
                 if n == "terms":
                     torch.nn.init.constant_(p, 0.001)
                 else:
                     if p.dim() > 1:
                         torch.nn.init.xavier_uniform_(p)
-        elif mode == "mean":
-            for n, p in self.named_parameters():
+            elif mode == "mean":
                 if p.dim() > 1:
                     torch.nn.init.xavier_uniform_(p)
                 val = p.mean()

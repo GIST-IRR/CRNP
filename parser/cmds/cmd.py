@@ -208,15 +208,9 @@ class CMD(object):
             model = self.model
         model.eval()
 
-        metric_f1 = UF1(
-            n_nonterms=self.args.model.NT, n_terms=self.args.model.T
-        )
-        metric_f1_left = UF1(
-            n_nonterms=self.args.model.NT, n_terms=self.args.model.T
-        )
-        metric_f1_right = UF1(
-            n_nonterms=self.args.model.NT, n_terms=self.args.model.T
-        )
+        metric_f1 = UF1(n_nonterms=self.model.NT, n_terms=self.model.T)
+        metric_f1_left = UF1(n_nonterms=self.model.NT, n_terms=self.model.T)
+        metric_f1_right = UF1(n_nonterms=self.model.NT, n_terms=self.model.T)
         metric_uas = UAS()
         metric_ll = LikelihoodMetric()
 

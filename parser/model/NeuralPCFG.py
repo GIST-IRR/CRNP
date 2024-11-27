@@ -77,7 +77,7 @@ class NeuralPCFG(PCFG_module):
             self.T,
             nonterm_emb=self.nonterm_emb,
             term_emb=self.term_emb,
-            mlp_mode=self.mlp_mode,
+            mlp_mode="standard",
             temp=self.cos_temp,
         )
         # root

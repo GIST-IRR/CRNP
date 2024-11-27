@@ -10,6 +10,15 @@ from ..modules.res import ResLayer
 import math
 
 
+def log_minmaxNorm(emb, dim=-1, eps=1e-8):
+    emb = emb - emb.min(dim, keepdims=True)[0]
+    # emb = emb / emb.max(dim)[0].unsqueeze(dim)
+    emb = emb + eps
+    emb = emb / emb.sum(-1, keepdims=True)
+    emb = emb.log()
+    return emb
+
+
 class UnaryRule_parameterizer(nn.Module):
     def __init__(
         self,
@@ -70,8 +79,11 @@ class UnaryRule_parameterizer(nn.Module):
         elif mlp_mode == None:
             self.register_module("rule_mlp", None)
 
-        if mlp_mode != "cosine similarity" and child_emb is not None:
-            self.rule_mlp[-1].weight = child_emb
+        if child_emb is not None:
+            if mlp_mode == "standard":
+                self.rule_mlp[-1].weight = child_emb
+            elif mlp_mode == "single":
+                self.rule_mlp.weight = child_emb
 
         if norm == "batch":
             self.norm = nn.BatchNorm1d(self.n_child)
@@ -104,6 +116,7 @@ class UnaryRule_parameterizer(nn.Module):
 
         if self.softmax:
             rule_prob = rule_prob.log_softmax(-1)
+            # rule_prob = log_minmaxNorm(rule_prob)
         return rule_prob
 
 
@@ -259,6 +272,7 @@ class Nonterm_parameterizer(nn.Module):
         if self.softmax:
             nonterm_prob = nonterm_prob / self.temperature
             nonterm_prob = nonterm_prob.log_softmax(-1)
+            # nonterm_prob = log_minmaxNorm(nonterm_prob)
 
         if reshape:
             nonterm_prob = nonterm_prob.reshape(self.NT, self.NT_T, self.NT_T)

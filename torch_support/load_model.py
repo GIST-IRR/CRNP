@@ -85,5 +85,8 @@ def get_optimizer_args(args, params, state_dict=None):
     # Load statd dict if is not None
     if state_dict is not None:
         optimizer.load_state_dict(state_dict)
+        for g in optimizer.param_groups:
+            for k, v in args.items():
+                g[k] = v
 
     return optimizer

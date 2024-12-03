@@ -15,7 +15,15 @@ from ..pcfgs.tdpcfg import TDPCFG
 
 class Nonterm_parameterizer(PCFG_module):
     def __init__(
-        self, dim, NT, T, r, nonterm_emb=None, term_emb=None, rank_proj=False
+        self,
+        dim,
+        NT,
+        T,
+        r,
+        nonterm_emb=None,
+        term_emb=None,
+        rank_proj=False,
+        norm=None,
     ):
         super(Nonterm_parameterizer, self).__init__()
         self.dim = dim
@@ -34,24 +42,47 @@ class Nonterm_parameterizer(PCFG_module):
         else:
             self.term_emb = nn.Parameter(torch.randn(self.T, self.dim))
 
-        self.parent_mlp = nn.Sequential(
-            nn.Linear(self.dim, self.dim),
-            nn.ReLU(),
-        )
-        self.left_mlp = nn.Sequential(
-            nn.Linear(self.dim, self.dim),
-            nn.ReLU(),
-        )
-        self.right_mlp = nn.Sequential(
-            nn.Linear(self.dim, self.dim),
-            nn.ReLU(),
-        )
+        if norm is None:
+            self.parent_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                nn.ReLU(),
+            )
+            self.left_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                nn.ReLU(),
+            )
+            self.right_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                nn.ReLU(),
+            )
+        elif norm == "layer":
+            self.parent_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                nn.LayerNorm(self.dim),
+                nn.ReLU(),
+            )
+            self.left_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                nn.LayerNorm(self.dim),
+                nn.ReLU(),
+            )
+            self.right_mlp = nn.Sequential(
+                nn.Linear(self.dim, self.dim),
+                nn.LayerNorm(self.dim),
+                nn.ReLU(),
+            )
 
         if self.rank_proj:
             self.rank_proj = nn.Linear(self.dim, self.r, bias=False)
         else:
             for l in [self.parent_mlp, self.left_mlp, self.right_mlp]:
                 l.append(nn.Linear(self.dim, self.r))
+
+        if norm == "layer":
+            # self.head_norm = nn.LayerNorm(self.r)
+            # self.left_norm = nn.LayerNorm(self.r)
+            # self.right_norm = nn.LayerNorm(self.r)
+            self.norm = nn.LayerNorm(self.r)
 
     def forward(self, softmax="log"):
         rule_state_emb = torch.cat([self.nonterm_emb, self.term_emb], dim=0)
@@ -63,6 +94,14 @@ class Nonterm_parameterizer(PCFG_module):
             head = self.rank_proj(head)
             left = self.rank_proj(left)
             right = self.rank_proj(right)
+
+        if self.norm:
+            # head = self.head_norm(head)
+            # left = self.left_norm(left)
+            # right = self.right_norm(right)
+            head = self.norm(head)
+            left = self.norm(left)
+            right = self.norm(right)
 
         if softmax == "log":
             head = head.log_softmax(-1)
@@ -108,6 +147,7 @@ class TNPCFG(NeuralPCFG):
             nonterm_emb=self.nonterm_emb,
             term_emb=self.term_emb,
             rank_proj=self.rank_proj,
+            norm=self.norm,
         )
         # root
         self.root = UnaryRule_parameterizer(

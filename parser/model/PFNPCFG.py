@@ -1,8 +1,8 @@
 from parser.model.FNPCFG import FNPCFG
-from parser.model.PFTNPCFG import Parse_Focusing
+from ..parse_foucsing.ParseFocusing import ParseFocusing
 
 
-class PFNPCFG(Parse_Focusing, FNPCFG):
+class PFNPCFG(ParseFocusing, FNPCFG):
     """Parse focused C-PCFG"""
 
     def __init__(self, args):

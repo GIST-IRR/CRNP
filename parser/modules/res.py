@@ -9,10 +9,10 @@ class ResLayer(nn.Module):
         elif activation == "tanh":
             activation = nn.Tanh
 
-        if norm == "batch":
-            norm = nn.BatchNorm1d
-        elif norm == "layer":
+        if norm == "layer":
             norm = nn.LayerNorm
+        elif norm == "batch":
+            norm = nn.BatchNorm1d
 
         if norm is None:
             self.linear = nn.Sequential(

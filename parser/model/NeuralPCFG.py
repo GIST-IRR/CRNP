@@ -79,6 +79,7 @@ class NeuralPCFG(PCFG_module):
             term_emb=self.term_emb,
             mlp_mode="standard",
             temp=self.cos_temp,
+            norm=self.norm,
         )
         # root
         self.root = UnaryRule_parameterizer(

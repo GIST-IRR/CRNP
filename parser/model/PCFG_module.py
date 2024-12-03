@@ -46,19 +46,18 @@ class UnaryRule_parameterizer(nn.Module):
         self.mlp_mode = mlp_mode
         self.temp = temp
 
+        self.parent_emb = parent_emb
+        self.child_emb = child_emb
+
         if parent_emb is None:
             self.parent_emb = nn.Parameter(
                 torch.randn(self.n_parent, self.h_dim)
             )
-        else:
-            self.parent_emb = parent_emb
 
-        if child_emb is None:
-            self.child_emb = nn.Parameter(
-                torch.randn(self.n_child, self.h_dim)
-            )
-        else:
-            self.child_emb = child_emb
+        # if child_emb is None:
+        #     self.child_emb = nn.Parameter(
+        #         torch.randn(self.n_child, self.h_dim)
+        #     )
 
         if orthogonal:
             self.orth = _Orthogonal()
@@ -66,9 +65,13 @@ class UnaryRule_parameterizer(nn.Module):
         if mlp_mode == "standard":
             self.rule_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.h_dim),
-                ResLayer(self.h_dim, self.h_dim, activation=activation),
-                ResLayer(self.h_dim, self.h_dim, activation=activation),
-                nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias),
+                ResLayer(
+                    self.h_dim, self.h_dim, activation=activation, norm=norm
+                ),
+                ResLayer(
+                    self.h_dim, self.h_dim, activation=activation, norm=norm
+                ),
+                nn.Linear(self.h_dim, self.n_child),
             )
         elif mlp_mode == "single":
             self.rule_mlp = nn.Linear(
@@ -76,6 +79,10 @@ class UnaryRule_parameterizer(nn.Module):
             )
         elif mlp_mode == "cosine similarity":
             self.rule_mlp = nn.CosineSimilarity(dim=-1)
+            if self.child_emb is None:
+                self.child_emb = nn.Parameter(
+                    torch.randn(self.n_child, self.h_dim)
+                )
         elif mlp_mode == None:
             self.register_module("rule_mlp", None)
 
@@ -183,28 +190,32 @@ class Nonterm_parameterizer(nn.Module):
         self.mlp_mode = mlp_mode
         self.temp = temp
 
+        self.nonterm_emb = nonterm_emb
+        self.term_emb = term_emb
+
+        self.shared = (
+            self.nonterm_emb is not None and self.term_emb is not None
+        )
+
         if nonterm_emb is None:
             self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.h_dim))
-        else:
-            self.nonterm_emb = nonterm_emb
 
-        if term_emb is None:
-            self.term_emb = nn.Parameter(torch.randn(self.T, self.h_dim))
-            self.shared = False
-        else:
-            self.term_emb = term_emb
-            self.shared = True
+        # if term_emb is None:
+        #     self.term_emb = nn.Parameter(torch.randn(self.T, self.h_dim))
 
         if not no_rule_layer:
             if mlp_mode == "standard":
-                if not self.shared:
+                if self.shared:
+                    self.parent_expose = nn.Linear(self.dim, self.dim * 2)
+                else:
                     self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
                     self.register_parameter("children_compose", None)
-                else:
-                    self.children_compose = nn.Linear(self.dim * 2, self.dim)
-                    # self.rule_mlp_bias = nn.Parameter(torch.rand(self.NT_T**2))
             elif mlp_mode == "cosine similarity":
                 self.rule_mlp = nn.CosineSimilarity(dim=-1)
+                if term_emb is None:
+                    self.term_emb = nn.Parameter(
+                        torch.randn(self.T, self.h_dim)
+                    )
                 if compose_fn == "linear":
                     self.children_compose = nn.Linear(self.dim * 2, self.dim)
                 elif compose_fn == "mlp":
@@ -236,7 +247,7 @@ class Nonterm_parameterizer(nn.Module):
         self.T = term.shape[0]
         self.NT_T = self.NT + self.T
 
-    def compose_children(self):
+    def get_children_emb(self):
         children_emb = torch.cat([self.nonterm_emb, self.term_emb])
         children_emb = torch.cat(
             [
@@ -245,12 +256,13 @@ class Nonterm_parameterizer(nn.Module):
             ],
             dim=2,
         )
-        children_emb = self.children_compose(children_emb)
+        # children_emb = self.children_compose(children_emb)
         return children_emb
 
     def forward(self, reshape=False):
         if self.mlp_mode == "cosine similarity":
-            children_emb = self.compose_children()
+            children_emb = self.get_children_emb()
+            children_emb = self.children_compose(children_emb)
             nonterm_prob = self.rule_mlp(
                 self.nonterm_emb[:, None, None, ...],
                 children_emb[None, ...],
@@ -259,10 +271,10 @@ class Nonterm_parameterizer(nn.Module):
             nonterm_prob = nonterm_prob.reshape(-1, self.NT_T**2)
         else:
             if self.shared:
-                children_emb = self.compose_children()
+                nonterm_emb = self.parent_expose(self.nonterm_emb)
+                children_emb = self.get_children_emb()
                 children_emb = children_emb.reshape(self.NT_T**2, -1)
-                nonterm_prob = self.nonterm_emb @ children_emb.T
-                # nonterm_prob = nonterm_prob + self.rule_mlp_bias
+                nonterm_prob = nonterm_emb @ children_emb.T
             else:
                 nonterm_prob = self.rule_mlp(self.nonterm_emb)
 

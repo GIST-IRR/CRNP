@@ -1165,6 +1165,11 @@ class Faster_PCFG(PCFG_base):
         )
         span_mask = rule.new_zeros(batch, N, N).requires_grad_(viterbi or mbr)
 
+        if tree is not None:
+            if tree.shape[-1] == S:
+                pos_mask = tree[..., NT:]
+                tree = tree[..., :NT]
+
         def contract(x, dim=-1):
             if viterbi:
                 return x.max(dim)[0]

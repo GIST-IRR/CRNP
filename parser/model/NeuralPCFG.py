@@ -41,9 +41,11 @@ class NeuralPCFG(PCFG_module):
         self.smooth = getattr(args, "smooth", 0.0)
         self.activation = getattr(args, "activation", "relu")
         self.norm = getattr(args, "norm", None)
+        self.last_layer_bias = getattr(args, "last_layer_bias", True)
 
         self.embedding_sharing = getattr(args, "embedding_sharing", False)
         self.mlp_mode = getattr(args, "mlp_mode", "standard")
+        self.compose_fn = getattr(args, "compose_fn", "compose")
         self.cos_temp = getattr(args, "cos_temp", 1)
 
         # Partition function
@@ -70,6 +72,7 @@ class NeuralPCFG(PCFG_module):
             parent_emb=self.term_emb,
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
+            last_layer_bias=self.last_layer_bias,
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -78,6 +81,7 @@ class NeuralPCFG(PCFG_module):
             nonterm_emb=self.nonterm_emb,
             term_emb=self.term_emb,
             mlp_mode="standard",
+            compose_fn=self.compose_fn,
             temp=self.cos_temp,
             norm=self.norm,
         )
@@ -91,6 +95,7 @@ class NeuralPCFG(PCFG_module):
             child_emb=self.nonterm_emb,
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
+            last_layer_bias=self.last_layer_bias,
         )
 
     def update_dropout(self, rate):

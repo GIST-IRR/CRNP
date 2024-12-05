@@ -83,6 +83,8 @@ class Nonterm_parameterizer(PCFG_module):
             # self.left_norm = nn.LayerNorm(self.r)
             # self.right_norm = nn.LayerNorm(self.r)
             self.norm = nn.LayerNorm(self.r)
+        else:
+            self.norm = None
 
     def forward(self, softmax="log"):
         rule_state_emb = torch.cat([self.nonterm_emb, self.term_emb], dim=0)

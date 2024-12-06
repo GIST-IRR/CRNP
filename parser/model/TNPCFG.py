@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 from ..model.PCFG_module import (
     PCFG_module,
-    Term_parameterizer,
-    Root_parameterizer,
     UnaryRule_parameterizer,
 )
 from ..model.NeuralPCFG import NeuralPCFG
@@ -82,7 +80,7 @@ class Nonterm_parameterizer(PCFG_module):
             # self.head_norm = nn.LayerNorm(self.r)
             # self.left_norm = nn.LayerNorm(self.r)
             # self.right_norm = nn.LayerNorm(self.r)
-            self.norm = nn.LayerNorm(self.r)
+            self.norm = nn.LayerNorm(self.r, elementwise_affine=False)
         else:
             self.norm = None
 
@@ -140,6 +138,8 @@ class TNPCFG(NeuralPCFG):
             parent_emb=self.term_emb,
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
+            last_layer_bias=self.last_layer_bias,
+            elementwise_affine=self.elementwise_affine,
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -161,6 +161,8 @@ class TNPCFG(NeuralPCFG):
             child_emb=self.nonterm_emb,
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
+            last_layer_bias=self.last_layer_bias,
+            elementwise_affine=self.elementwise_affine,
         )
 
     def rules_similarity(self, unary=None):

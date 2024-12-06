@@ -8,9 +8,7 @@ from parser.pfs.partition_function import PartitionFunction
 from ..pcfgs.pcfg import PCFG
 from .PCFG_module import (
     PCFG_module,
-    Term_parameterizer,
     Nonterm_parameterizer,
-    Root_parameterizer,
     UnaryRule_parameterizer,
 )
 
@@ -42,6 +40,7 @@ class NeuralPCFG(PCFG_module):
         self.activation = getattr(args, "activation", "relu")
         self.norm = getattr(args, "norm", None)
         self.last_layer_bias = getattr(args, "last_layer_bias", True)
+        self.elementwise_affine = getattr(args, "elementwise_affine", True)
 
         self.embedding_sharing = getattr(args, "embedding_sharing", False)
         self.mlp_mode = getattr(args, "mlp_mode", "standard")
@@ -73,6 +72,7 @@ class NeuralPCFG(PCFG_module):
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
             last_layer_bias=self.last_layer_bias,
+            elementwise_affine=self.elementwise_affine,
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -96,6 +96,7 @@ class NeuralPCFG(PCFG_module):
             mlp_mode=self.mlp_mode,
             temp=self.cos_temp,
             last_layer_bias=self.last_layer_bias,
+            elementwise_affine=self.elementwise_affine,
         )
 
     def update_dropout(self, rate):

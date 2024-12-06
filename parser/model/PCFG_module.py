@@ -26,6 +26,7 @@ class UnaryRule_parameterizer(nn.Module):
         norm=None,
         temp=1,
         last_layer_bias=True,
+        elementwise_affine=True,
     ):
         super().__init__()
         self.dim = dim
@@ -57,12 +58,20 @@ class UnaryRule_parameterizer(nn.Module):
             self.rule_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.h_dim),
                 ResLayer(
-                    self.h_dim, self.h_dim, activation=activation, norm=norm
+                    self.h_dim,
+                    self.h_dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
                 ),
                 ResLayer(
-                    self.h_dim, self.h_dim, activation=activation, norm=norm
+                    self.h_dim,
+                    self.h_dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
                 ),
-                nn.Linear(self.h_dim, self.n_child),
+                nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias),
             )
         elif mlp_mode == "single":
             self.rule_mlp = nn.Linear(
@@ -86,7 +95,8 @@ class UnaryRule_parameterizer(nn.Module):
         if norm == "batch":
             self.norm = nn.BatchNorm1d(self.n_child)
         elif norm == "layer":
-            self.norm = nn.LayerNorm(self.n_child)
+            self.norm = nn.LayerNorm(self.n_child, elementwise_affine=False)
+            self.norm_std = nn.Parameter(torch.ones(self.n_parent, 1))
         else:
             self.register_parameter("norm", None)
 
@@ -111,42 +121,11 @@ class UnaryRule_parameterizer(nn.Module):
 
         if self.norm is not None:
             rule_prob = self.norm(rule_prob)
+            rule_prob = self.norm_std * rule_prob
 
         if self.softmax:
             rule_prob = rule_prob.log_softmax(-1)
         return rule_prob
-
-
-class Term_parameterizer(UnaryRule_parameterizer):
-    def __init__(
-        self,
-        dim,
-        T,
-        V,
-        h_dim=None,
-        activation="relu",
-        term_emb=None,
-        word_emb=None,
-        orthogonal=False,
-        mlp_mode="standard",
-        softmax=True,
-        norm=None,
-        temp=1,
-    ):
-        super(Term_parameterizer, self).__init__(
-            dim=dim,
-            n_parent=T,
-            n_child=V,
-            h_dim=h_dim,
-            activation=activation,
-            parent_emb=term_emb,
-            child_emb=word_emb,
-            orthogonal=orthogonal,
-            mlp_mode=mlp_mode,
-            softmax=softmax,
-            norm=norm,
-            temp=temp,
-        )
 
 
 class Nonterm_parameterizer(nn.Module):
@@ -189,7 +168,7 @@ class Nonterm_parameterizer(nn.Module):
         if not self.shared_nonterm:
             self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.h_dim))
 
-        if mlp_mode == "standard":
+        if mlp_mode == "standard" or mlp_mode == "single":
             if self.shared_nonterm and self.shared_term:
                 if compose_fn == "compose":
                     self.children_compose = nn.Linear(self.dim * 2, self.dim)
@@ -218,7 +197,8 @@ class Nonterm_parameterizer(nn.Module):
         if norm == "batch":
             self.norm = nn.BatchNorm1d(self.NT_T**2)
         elif norm == "layer":
-            self.norm = nn.LayerNorm(self.NT_T**2)
+            self.norm = nn.LayerNorm(self.NT_T**2, elementwise_affine=False)
+            self.norm_std = nn.Parameter(torch.ones(self.NT, 1))
         else:
             self.register_parameter("norm", None)
 
@@ -275,6 +255,7 @@ class Nonterm_parameterizer(nn.Module):
 
         if self.norm is not None:
             nonterm_prob = self.norm(nonterm_prob)
+            nonterm_prob = self.norm_std * nonterm_prob
 
         if self.softmax:
             nonterm_prob = nonterm_prob / self.temperature
@@ -284,38 +265,6 @@ class Nonterm_parameterizer(nn.Module):
             nonterm_prob = nonterm_prob.reshape(self.NT, self.NT_T, self.NT_T)
 
         return nonterm_prob
-
-
-class Root_parameterizer(UnaryRule_parameterizer):
-    def __init__(
-        self,
-        dim,
-        ROOT,
-        NT,
-        h_dim=None,
-        root_emb=None,
-        nonterm_emb=None,
-        orthogonal=False,
-        mlp_mode="standard",
-        activation="relu",
-        softmax=True,
-        norm=None,
-        temp=1,
-    ):
-        super(Root_parameterizer, self).__init__(
-            dim=dim,
-            n_parent=ROOT,
-            n_child=NT,
-            h_dim=h_dim,
-            activation=activation,
-            parent_emb=root_emb,
-            child_emb=nonterm_emb,
-            orthogonal=orthogonal,
-            mlp_mode=mlp_mode,
-            softmax=softmax,
-            norm=norm,
-            temp=temp,
-        )
 
 
 class PCFG_module(nn.Module):

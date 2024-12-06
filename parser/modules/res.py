@@ -2,7 +2,14 @@ import torch.nn as nn
 
 
 class ResLayer(nn.Module):
-    def __init__(self, in_dim, out_dim, activation="relu", norm=None):
+    def __init__(
+        self,
+        in_dim,
+        out_dim,
+        activation="relu",
+        norm=None,
+        elementwise_affine=True,
+    ):
         super(ResLayer, self).__init__()
         if activation == "relu":
             activation = nn.ReLU
@@ -24,10 +31,10 @@ class ResLayer(nn.Module):
         else:
             self.linear = nn.Sequential(
                 nn.Linear(in_dim, out_dim),
-                norm(out_dim),
+                norm(out_dim, elementwise_affine=elementwise_affine),
                 activation(),
                 nn.Linear(out_dim, out_dim),
-                norm(out_dim),
+                norm(out_dim, elementwise_affine=elementwise_affine),
                 activation(),
             )
 

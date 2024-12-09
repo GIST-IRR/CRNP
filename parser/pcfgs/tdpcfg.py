@@ -445,6 +445,9 @@ class Fastest_TDPCFG(PCFG_base):
 
         if tree is not None:
             tree = tree.log().clamp(-1e9)
+            if tree.shape[-1] == S:
+                pos_tree = tree[..., NT:]
+                tree = tree[..., :NT]
 
         def transform(x, y):
             """

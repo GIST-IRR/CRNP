@@ -1,4 +1,30 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+class Sine(nn.Module):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return torch.sin(input)
+
+
+class XSinusoid(nn.Module):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return input * torch.sin(input)
+
+
+class PXSinusoid(nn.Module):
+    def __init__(self, a=2.0):
+        super().__init__()
+        self.a = nn.Parameter(torch.tensor(a))
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return input * torch.sin(input) / self.a
+
+
+class Relu_Sinusoid(nn.Module):
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return F.relu(input) + torch.sin(input)
 
 
 class ResLayer(nn.Module):
@@ -15,6 +41,12 @@ class ResLayer(nn.Module):
             activation = nn.ReLU
         elif activation == "tanh":
             activation = nn.Tanh
+        elif activation == "sine":
+            activation = Sine
+        elif activation == "px-sine":
+            activation = PXSinusoid
+        elif activation == "relu+sine":
+            activation = Relu_Sinusoid
 
         if norm == "layer":
             norm = nn.LayerNorm

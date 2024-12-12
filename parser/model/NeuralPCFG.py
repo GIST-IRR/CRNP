@@ -84,6 +84,8 @@ class NeuralPCFG(PCFG_module):
             compose_fn=self.compose_fn,
             temp=self.cos_temp,
             norm=self.norm,
+            activation=self.activation,
+            elementwise_affine=self.elementwise_affine,
         )
         # root
         self.root = UnaryRule_parameterizer(

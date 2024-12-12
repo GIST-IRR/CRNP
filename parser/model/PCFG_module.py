@@ -143,6 +143,8 @@ class Nonterm_parameterizer(nn.Module):
         softmax=True,
         norm=None,
         temp=1,
+        activation="relu",
+        elementwise_affine=True,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -175,7 +177,24 @@ class Nonterm_parameterizer(nn.Module):
                 elif compose_fn == "expose":
                     self.parent_expose = nn.Linear(self.dim, self.dim * 2)
             else:
-                self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
+                # self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
+                self.rule_mlp = nn.Sequential(
+                    ResLayer(
+                        self.h_dim,
+                        self.h_dim,
+                        activation=activation,
+                        norm=norm,
+                        elementwise_affine=elementwise_affine,
+                    ),
+                    ResLayer(
+                        self.h_dim,
+                        self.h_dim,
+                        activation=activation,
+                        norm=norm,
+                        elementwise_affine=elementwise_affine,
+                    ),
+                    nn.Linear(self.dim, (self.NT_T) ** 2),
+                )
                 self.register_parameter("children_compose", None)
         elif mlp_mode == "cosine similarity":
             self.rule_mlp = nn.CosineSimilarity(dim=-1)

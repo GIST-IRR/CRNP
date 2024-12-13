@@ -9,6 +9,7 @@ from ..model.NeuralPCFG import NeuralPCFG
 from ..pfs.td_partition_function import TDPartitionFunction
 from ..pcfgs.pcfg import PCFG
 from ..pcfgs.tdpcfg import TDPCFG
+from ..modules.res import ResLayer, Sine
 
 
 class Nonterm_parameterizer(PCFG_module):
@@ -22,6 +23,9 @@ class Nonterm_parameterizer(PCFG_module):
         term_emb=None,
         rank_proj=False,
         norm=None,
+        activation="relu",
+        elementwise_affine=True,
+        mlp_mode="standard",
     ):
         super(Nonterm_parameterizer, self).__init__()
         self.dim = dim
@@ -40,34 +44,66 @@ class Nonterm_parameterizer(PCFG_module):
         else:
             self.term_emb = nn.Parameter(torch.randn(self.T, self.dim))
 
-        if norm is None:
+        if mlp_mode == "single":
+            if norm == "layer":
+                norm = nn.LayerNorm
+            elif norm == "batch":
+                norm = nn.BatchNorm1d
+
+            if activation == "relu":
+                activation = nn.ReLU
+            elif activation == "sine":
+                activation = Sine
+
             self.parent_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.dim),
-                nn.ReLU(),
             )
             self.left_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.dim),
-                nn.ReLU(),
             )
             self.right_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.dim),
-                nn.ReLU(),
             )
-        elif norm == "layer":
+            if not isinstance(norm, str):
+                self.parent_mlp.append(
+                    norm(self.dim, elementwise_affine=elementwise_affine)
+                )
+                self.left_mlp.append(
+                    norm(self.dim, elementwise_affine=elementwise_affine)
+                )
+                self.right_mlp.append(
+                    norm(self.dim, elementwise_affine=elementwise_affine)
+                )
+            self.parent_mlp.append(activation())
+            self.left_mlp.append(activation())
+            self.right_mlp.append(activation())
+        elif mlp_mode == "standard":
             self.parent_mlp = nn.Sequential(
-                nn.Linear(self.dim, self.dim),
-                nn.LayerNorm(self.dim),
-                nn.ReLU(),
+                ResLayer(
+                    self.dim,
+                    self.dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
+                ),
             )
             self.left_mlp = nn.Sequential(
-                nn.Linear(self.dim, self.dim),
-                nn.LayerNorm(self.dim),
-                nn.ReLU(),
+                ResLayer(
+                    self.dim,
+                    self.dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
+                )
             )
             self.right_mlp = nn.Sequential(
-                nn.Linear(self.dim, self.dim),
-                nn.LayerNorm(self.dim),
-                nn.ReLU(),
+                ResLayer(
+                    self.dim,
+                    self.dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
+                )
             )
 
         if self.rank_proj:
@@ -120,8 +156,8 @@ class TNPCFG(NeuralPCFG):
         self.pcfg = TDPCFG()
         self.part = TDPartitionFunction()
 
-    def _set_arguments(self, args):
-        super()._set_arguments(args)
+    def _set_configs(self, args):
+        super()._set_configs(args)
         self.r = getattr(args, "r_dim", 1000)
         self.word_emb_size = getattr(args, "word_emb_size", 200)
         self.rank_proj = getattr(args, "rank_proj", False)
@@ -133,13 +169,8 @@ class TNPCFG(NeuralPCFG):
             self.s_dim,
             self.T,
             self.V,
-            activation=self.activation,
-            norm=self.norm,
             parent_emb=self.term_emb,
-            mlp_mode=self.mlp_mode,
-            temp=self.cos_temp,
-            last_layer_bias=self.last_layer_bias,
-            elementwise_affine=self.elementwise_affine,
+            **self.cfgs.unary
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -149,20 +180,15 @@ class TNPCFG(NeuralPCFG):
             nonterm_emb=self.nonterm_emb,
             term_emb=self.term_emb,
             rank_proj=self.rank_proj,
-            norm=self.norm,
+            **self.cfgs.binary
         )
         # root
         self.root = UnaryRule_parameterizer(
             self.s_dim,
             1,
             self.NT,
-            activation=self.activation,
-            norm=self.norm,
             child_emb=self.nonterm_emb,
-            mlp_mode=self.mlp_mode,
-            temp=self.cos_temp,
-            last_layer_bias=self.last_layer_bias,
-            elementwise_affine=self.elementwise_affine,
+            **self.cfgs.root
         )
 
     def rules_similarity(self, unary=None):

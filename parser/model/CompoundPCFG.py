@@ -93,11 +93,11 @@ class Encoder(nn.Module):
 
 
 class CompoundPCFG(NeuralPCFG):
-    def _set_arguments(self, args):
-        super()._set_arguments(args)
-        self.z_dim = getattr(args, "z_dim")
-        self.w_dim = getattr(args, "w_dim")
-        self.h_dim = getattr(args, "h_dim")
+    def _set_configs(self, cfgs):
+        super()._set_configs(cfgs)
+        self.z_dim = getattr(cfgs, "z_dim")
+        self.w_dim = getattr(cfgs, "w_dim")
+        self.h_dim = getattr(cfgs, "h_dim")
 
     def _init_grammar(self):
         self.nonterms = Nonterm_parameterizer(
@@ -160,7 +160,7 @@ class CompoundPCFG(NeuralPCFG):
             "kl": rules["kl"],
         }
 
-    def loss(self, input, partition=False, max_depth=0, soft=False):
+    def loss(self, input, partition=False, max_depth=0, soft=False, **kwargs):
         res = super().loss(
             input,
             partition=partition,
@@ -170,19 +170,9 @@ class CompoundPCFG(NeuralPCFG):
         )
         return (res + self.rules["kl"]).mean()
 
-    def evaluate(
-        self,
-        input,
-        decode_type,
-        depth=0,
-        label=False,
-        depth_mode=False,
-        **kwargs
-    ):
+    def evaluate(self, input, decode_type, depth=0, label=False, **kwargs):
         rules = self.forward(input, evaluating=True)
-        # terms = self.term_from_unary(input["word"], rules["unary"])
         rules = self.batchify(rules, input["word"])
-
         result = self.decode(rules, input["seq_len"], decode_type, label)
 
         if depth > 0:

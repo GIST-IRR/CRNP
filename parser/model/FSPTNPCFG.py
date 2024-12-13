@@ -1,20 +1,16 @@
-import torch
 import torch.nn as nn
 
-from .PFTNPCFG import Parse_Focusing
+from ..parse_foucsing.ParseFocusing import ParseFocusing
 from .FNPCFG import FNPCFG
 
 
-class FSPTNPCFG(Parse_Focusing, FNPCFG):
+class FSPTNPCFG(ParseFocusing, FNPCFG):
     "Fully-Shared Parse-foucsed TNPCFG"
 
     def __init__(self, args):
         super(FSPTNPCFG, self).__init__(args)
         self._setup_parse_focusing(args)
         self.sim = nn.CosineSimilarity(dim=-1)
-
-    def _embedding_sharing(self):
-        super()._embedding_sharing()
 
     def loss(self, input, partition=False, soft=False, label=False, **kwargs):
         loss = super().loss(

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.distributions as dist
 from torch.nn.utils.parametrizations import _Orthogonal
 
-from ..modules.res import ResLayer
+from ..modules.res import ResLayer, Bilinear_ResLayer
 
 import math
 
@@ -17,16 +17,17 @@ class UnaryRule_parameterizer(nn.Module):
         n_parent,
         n_child,
         h_dim=None,
-        activation="relu",
         parent_emb=None,
         child_emb=None,
         orthogonal=False,
+        activation="relu",
         mlp_mode="standard",
         softmax=True,
         norm=None,
         temp=1,
         last_layer_bias=True,
         elementwise_affine=True,
+        residual="standard",
     ):
         super().__init__()
         self.dim = dim
@@ -51,20 +52,25 @@ class UnaryRule_parameterizer(nn.Module):
         # if not self.shared_child:
         #     self.register_parameter("child_emb", None)
 
+        if residual == "standard":
+            residual = ResLayer
+        elif residual == "bilinear":
+            residual = Bilinear_ResLayer
+
         if orthogonal:
             self.orth = _Orthogonal()
 
         if mlp_mode == "standard":
             self.rule_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.h_dim),
-                ResLayer(
+                residual(
                     self.h_dim,
                     self.h_dim,
                     activation=activation,
                     norm=norm,
                     elementwise_affine=elementwise_affine,
                 ),
-                ResLayer(
+                residual(
                     self.h_dim,
                     self.h_dim,
                     activation=activation,
@@ -145,6 +151,7 @@ class Nonterm_parameterizer(nn.Module):
         temp=1,
         activation="relu",
         elementwise_affine=True,
+        residual="standard",
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -170,6 +177,11 @@ class Nonterm_parameterizer(nn.Module):
         if not self.shared_nonterm:
             self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.h_dim))
 
+        if residual == "standard":
+            residual = ResLayer
+        elif residual == "bilinear":
+            residual = Bilinear_ResLayer
+
         if mlp_mode == "standard" or mlp_mode == "single":
             if self.shared_nonterm and self.shared_term:
                 if compose_fn == "compose":
@@ -179,14 +191,14 @@ class Nonterm_parameterizer(nn.Module):
             else:
                 # self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
                 self.rule_mlp = nn.Sequential(
-                    ResLayer(
+                    residual(
                         self.h_dim,
                         self.h_dim,
                         activation=activation,
                         norm=norm,
                         elementwise_affine=elementwise_affine,
                     ),
-                    ResLayer(
+                    residual(
                         self.h_dim,
                         self.h_dim,
                         activation=activation,
@@ -291,6 +303,7 @@ class PCFG_module(nn.Module):
         super().__init__()
         self._no_initialize = []
 
+    # Module tools
     def _initialize(self, mode="xavier_uniform", value=0.0):
         # Original Method
         for n, p in self.named_parameters():
@@ -371,17 +384,46 @@ class PCFG_module(nn.Module):
         #         torch.nn.init.constant_(p, val)
         #         p.requires_grad = False
 
+    def _set_configs(self, cfgs):
+        self.cfgs = cfgs
+        # number of symbols
+        self.NT = getattr(cfgs, "NT", 30)
+        self.T = getattr(cfgs, "T", 60)
+        self.NT_T = self.NT + self.T
+        self.V = getattr(cfgs, "V", 10003)
+
+    def named_parameters_without(self, key="terms"):
+        for name, param in self.named_parameters():
+            module_name = name.split(".")[0]
+            if module_name != key:
+                yield param
+
+    # Grammar tools
+    @property
+    def rules(self):
+        if getattr(self, "_rules", None) is None:
+            self._rules = self.forward()
+        return self._rules
+
+    @rules.setter
+    def rules(self, rule):
+        self._rules = rule
+
     def clear_grammar(self):
         # This function is used when the network is updated
         # Updated network will have different rules
         self.rules = None
 
-    def withoutTerm_parameters(self):
-        for name, param in self.named_parameters():
-            module_name = name.split(".")[0]
-            if module_name != "terms":
-                yield param
+    @property
+    def metrics(self):
+        if getattr(self, "_metrics", None) is None:
+            self._metrics = None
+        return self._metrics
 
+    def clear_metrics(self):
+        self._metrics = None
+
+    # What?
     def batch_dot(self, x, y):
         return (x * y).sum(-1, keepdims=True)
 
@@ -405,57 +447,7 @@ class PCFG_module(nn.Module):
     def max_entropy(self, num):
         return math.log(num)
 
-    def cos_sim(self, x, log=False):
-        b, cat = x.shape[:2]
-        cs = x.new_zeros(cat, cat).fill_diagonal_(1).expand(b, -1, -1).clone()
-        for i in range(cat):
-            if i == cat - 1:
-                continue
-            u = x[:, i : i + 1].expand(-1, cat - i - 1, -1)
-            o = x[:, i + 1 : cat]
-            if not log:
-                u = u.exp()
-                o = o.exp()
-            cosine_score = F.cosine_similarity(u, o, dim=2)
-            cs[:, i, i + 1 : cat] = cosine_score
-            cs[:, i + 1 : cat, i] = cosine_score
-        return cs
-
-    def kl_div(self, x):
-        b, cat = x.shape[:2]
-        kl = x.new_zeros(b, cat, cat)
-        x = x.reshape(b, cat, -1)
-        for i in range(cat):
-            t = x[:, i : i + 1].expand(-1, cat, -1)
-            kl_score = F.kl_div(t, x, log_target=True, reduction="none")
-            kl_score = kl_score.sum(-1)
-            kl[:, i] = kl_score
-        # reverse ratio of kl score
-        # mask = nkl.new_ones(nkl.shape[1:]).fill_diagonal_(0)
-        # weight = 1 - (nkl / nkl.sum((1, 2), keepdims=True))
-        # weight = (mask * weight).detach()
-        # nkl = (weight * nkl).mean((1, 2))
-        # nkl = nkl.mean()
-        return kl
-
-    def cos_sim_mean(self, x):
-        cat = x.shape[1]
-        x = x.tril(diagonal=-1)
-        x = x.flatten(start_dim=1)
-        x = x.abs()
-        x = x.sum(-1)
-        x = x / (cat * (cat - 1) / 2)
-        return x
-
-    def cos_sim_max(self, x):
-        x = x.tril(diagonal=-1)
-        x = x.flatten(start_dim=1)
-        x = x.abs()
-        return x.max(-1)[0]
-
-    def js_div(self, x, y, log_target=False):
-        raise NotImplementedError
-
+    # Entropy
     def _entropy(self, rule, batch=False, reduce="none", probs=False):
         if rule.dim() == 2:
             rule = rule.unsqueeze(1)
@@ -505,8 +497,12 @@ class PCFG_module(nn.Module):
             self.rules["unary"], batch=batch, probs=probs, reduce=reduce
         )
 
+    # Parameter Update
     def update_depth(self, depth):
         self.depth = depth
+
+    def update_dropout(self, rate):
+        self.apply_dropout = self.init_dropout * rate
 
     def clear_rules_grad(self):
         for k, v in self.rules.items():

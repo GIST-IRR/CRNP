@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from nltk import Tree
@@ -19,33 +18,20 @@ class NeuralPCFG(PCFG_module):
         self.pcfg = PCFG()
         self.part = PartitionFunction()
 
-        self._set_arguments(args)
+        self._set_configs(args)
         self._init_grammar()
         self._initialize()
 
-    def _set_arguments(self, args):
-        self.args = args
-
-        # number of symbols
-        self.NT = getattr(args, "NT", 30)
-        self.T = getattr(args, "T", 60)
-        self.NT_T = self.NT + self.T
-        self.V = getattr(args, "V", 10003)
+    def _set_configs(self, args):
+        super()._set_configs(args)
 
         self.s_dim = getattr(args, "s_dim", 256)
         self.dropout = getattr(args, "dropout", 0.0)
 
         self.temperature = getattr(args, "temperature", 1.0)
         self.smooth = getattr(args, "smooth", 0.0)
-        self.activation = getattr(args, "activation", "relu")
-        self.norm = getattr(args, "norm", None)
-        self.last_layer_bias = getattr(args, "last_layer_bias", True)
-        self.elementwise_affine = getattr(args, "elementwise_affine", True)
 
         self.embedding_sharing = getattr(args, "embedding_sharing", False)
-        self.mlp_mode = getattr(args, "mlp_mode", "standard")
-        self.compose_fn = getattr(args, "compose_fn", "compose")
-        self.cos_temp = getattr(args, "cos_temp", 1)
 
         # Partition function
         self.mode = getattr(args, "mode", "length_unary")
@@ -66,13 +52,8 @@ class NeuralPCFG(PCFG_module):
             self.s_dim,
             self.T,
             self.V,
-            activation=self.activation,
-            norm=self.norm,
             parent_emb=self.term_emb,
-            mlp_mode=self.mlp_mode,
-            temp=self.cos_temp,
-            last_layer_bias=self.last_layer_bias,
-            elementwise_affine=self.elementwise_affine,
+            **self.cfgs.unary
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -80,29 +61,16 @@ class NeuralPCFG(PCFG_module):
             self.T,
             nonterm_emb=self.nonterm_emb,
             term_emb=self.term_emb,
-            mlp_mode="standard",
-            compose_fn=self.compose_fn,
-            temp=self.cos_temp,
-            norm=self.norm,
-            activation=self.activation,
-            elementwise_affine=self.elementwise_affine,
+            **self.cfgs.binary
         )
         # root
         self.root = UnaryRule_parameterizer(
             self.s_dim,
             1,
             self.NT,
-            activation=self.activation,
-            norm=self.norm,
             child_emb=self.nonterm_emb,
-            mlp_mode=self.mlp_mode,
-            temp=self.cos_temp,
-            last_layer_bias=self.last_layer_bias,
-            elementwise_affine=self.elementwise_affine,
+            **self.cfgs.root
         )
-
-    def update_dropout(self, rate):
-        self.apply_dropout = self.init_dropout * rate
 
     def entropy(self, key, batch=False, probs=False, reduce="none"):
         assert key == "root" or key == "rule" or key == "unary"
@@ -111,78 +79,16 @@ class NeuralPCFG(PCFG_module):
         )
 
     def get_entropy(self, batch=False, probs=False, reduce="mean"):
-        r_ent = self.entropy("root", batch=batch, probs=probs, reduce=reduce)
-        n_ent = self.entropy("rule", batch=batch, probs=probs, reduce=reduce)
-        t_ent = self.entropy("unary", batch=batch, probs=probs, reduce=reduce)
+        r_ent, n_ent, t_ent = (
+            self.entropy(k, batch=batch, probs=probs, reduce=reduce)
+            for k in ["root", "rule", "unary"]
+        )
 
-        # ent_prob = torch.cat([r_ent, n_ent, t_ent])
-        # ent_prob = ent_prob.mean()
         if reduce == "none":
             ent_prob = {"root": r_ent, "rule": n_ent, "unary": t_ent}
         elif reduce == "mean":
             ent_prob = torch.cat([r_ent, n_ent, t_ent]).mean()
         return ent_prob
-
-    def sentence_vectorizer(sent, model):
-        sent_vec = []
-        numw = 0
-        for w in sent:
-            try:
-                if numw == 0:
-                    sent_vec = model.wv[w]
-                else:
-                    sent_vec = np.add(sent_vec, model.wv[w])
-                numw += 1
-            except:
-                pass
-        return np.asarray(sent_vec) / numw
-
-    def rules_similarity(self, rule=None, unary=None):
-        if rule is None:
-            rule = self.rules["rule"]
-        if unary is None:
-            unary = self.rules["unary"]
-
-        b = rule.shape[0]
-
-        tkl = self.kl_div(unary)  # KLD for terminal
-        nkl = self.kl_div(rule)  # KLD for nonterminal
-        tcs = self.cos_sim(unary)  # cos sim for terminal
-        ncs = self.cos_sim(
-            rule.reshape(b, self.NT, -1)
-        )  # cos sim for nonterminal
-        log_tcs = self.cos_sim(unary, log=True)  # log cos sim for terminal
-        log_ncs = self.cos_sim(
-            rule.reshape(b, self.NT, -1), log=True
-        )  # log cos sim for nonterminal
-
-        return {
-            "kl_term": tkl,
-            "kl_nonterm": nkl,
-            "cos_term": tcs,
-            "cos_nonterm": ncs,
-            "log_cos_term": log_tcs,
-            "log_cos_nonterm": log_ncs,
-        }
-
-    @property
-    def metrics(self):
-        if getattr(self, "_metrics", None) is None:
-            self._metrics = self.rules_similarity()
-        return self._metrics
-
-    def clear_metrics(self):
-        self._metrics = None
-
-    @property
-    def rules(self):
-        if getattr(self, "_rules", None) is None:
-            self._rules = self.forward()
-        return self._rules
-
-    @rules.setter
-    def rules(self, rule):
-        self._rules = rule
 
     def forward(self, input=None):
         # Root
@@ -212,30 +118,15 @@ class NeuralPCFG(PCFG_module):
             self.rules, lens=max_length, mode="depth", until_converge=True
         )
 
-    def unique_terms(self, terms):
-        b, n = terms.shape
-        for t in terms:
-            output, inverse, counts = torch.unique(
-                t, return_inverse=True, return_counts=True
-            )
-            duplicated_index = counts.where(counts > 1)
-
     def batchify(self, rules, words):
         b = words.shape[0]
 
-        root = rules["root"]
-        root = root.expand(b, root.shape[-1])
-
-        rule = rules["rule"]
-        rule = rule.expand(b, *rule.shape)
-
-        unary = rules["unary"]
-        unary = unary[torch.arange(self.T)[None, None], words[:, :, None]]
-
         return {
-            "unary": unary,
-            "root": root,
-            "rule": rule,
+            "root": rules["root"].expand(b, rules["root"].shape[-1]),
+            "rule": rules["rule"].expand(b, *rules["rule"].shape),
+            "unary": rules["unary"][
+                torch.arange(self.T)[None, None], words[:, :, None]
+            ],
         }
 
     def loss(self, input, partition=False, soft=False, **kwargs):
@@ -305,7 +196,6 @@ class NeuralPCFG(PCFG_module):
         self,
         input,
         decode_type="mbr",
-        depth=0,
         label=False,
         rule_update=False,
         **kwargs
@@ -313,12 +203,6 @@ class NeuralPCFG(PCFG_module):
         self.check_rule_update(rule_update)
         rules = self.batchify(self.rules, input["word"])
         result = self.decode(rules, input["seq_len"], decode_type, label)
-
-        # if depth > 0:
-        #     result["depth"] = self.part(
-        #         self.rules, depth, mode="length", depth_output="full"
-        #     )
-        #     result["depth"] = result["depth"].exp()
 
         return result
 

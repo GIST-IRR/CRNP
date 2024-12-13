@@ -74,18 +74,40 @@ class ResLayer(nn.Module):
         return self.linear(x) + x
 
 
-class ResLayerNorm(nn.Module):
-    def __init__(self, in_dim, out_dim):
-        super(ResLayerNorm, self).__init__()
-        self.linear = nn.Sequential(
-            nn.utils.weight_norm(nn.Linear(in_dim, out_dim)),
-            nn.ReLU(),
-            nn.utils.weight_norm(nn.Linear(out_dim, out_dim)),
+class Bilinear_ResLayer(nn.Module):
+
+    def __init__(
+        self,
+        in_dim,
+        out_dim,
+        norm=None,
+        elementwise_affine=True,
+        *args,
+        **kwargs
+    ):
+        super(Bilinear_ResLayer, self).__init__()
+
+        if norm == "layer":
+            norm = nn.LayerNorm
+        elif norm == "batch":
+            norm = nn.BatchNorm1d
+
+        self.relu_layer = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            norm(out_dim, elementwise_affine=elementwise_affine),
             nn.ReLU(),
         )
+        self.sine_layer = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            norm(out_dim, elementwise_affine=elementwise_affine),
+            Sine(),
+        )
+        self.sine_amplitude = nn.Parameter(torch.ones(out_dim))
 
     def forward(self, x):
-        return self.linear(x) + x
+        r_x = self.relu_layer(x)
+        s_x = self.sine_amplitude * self.sine_layer(x)
+        return x + r_x + s_x
 
 
 if __name__ == "__main__":

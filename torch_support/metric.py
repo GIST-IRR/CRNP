@@ -1,4 +1,5 @@
 import sys
+import math
 
 import torch
 import torch.nn as nn
@@ -327,3 +328,24 @@ def dice(pred, gold):
 
     res = 2 * len(intersection) / len(union) + len(intersection)
     return res
+
+
+def tri_mean(x, diagonal=-1):
+    cat = x.shape[1]
+    x = x.tril(diagonal=diagonal)
+    x = x.flatten(start_dim=1)
+    x = x.abs()
+    x = x.sum(-1)
+    x = x / (cat * (cat - 1) / 2)
+    return x
+
+
+def tri_max(x, diagonal=-1):
+    x = x.tril(diagonal=diagonal)
+    x = x.flatten(start_dim=1)
+    x = x.abs()
+    return x.max(-1)[0]
+
+
+def entropy_maximum(num):
+    return math.log(num)

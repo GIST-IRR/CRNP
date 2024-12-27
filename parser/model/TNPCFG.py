@@ -86,6 +86,13 @@ class Nonterm_parameterizer(PCFG_module):
                     norm=norm,
                     elementwise_affine=elementwise_affine,
                 ),
+                ResLayer(
+                    self.dim,
+                    self.dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
+                ),
             )
             self.left_mlp = nn.Sequential(
                 ResLayer(
@@ -94,7 +101,14 @@ class Nonterm_parameterizer(PCFG_module):
                     activation=activation,
                     norm=norm,
                     elementwise_affine=elementwise_affine,
-                )
+                ),
+                ResLayer(
+                    self.dim,
+                    self.dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
+                ),
             )
             self.right_mlp = nn.Sequential(
                 ResLayer(
@@ -103,7 +117,14 @@ class Nonterm_parameterizer(PCFG_module):
                     activation=activation,
                     norm=norm,
                     elementwise_affine=elementwise_affine,
-                )
+                ),
+                ResLayer(
+                    self.dim,
+                    self.dim,
+                    activation=activation,
+                    norm=norm,
+                    elementwise_affine=elementwise_affine,
+                ),
             )
 
         if self.rank_proj:
@@ -117,6 +138,9 @@ class Nonterm_parameterizer(PCFG_module):
             # self.left_norm = nn.LayerNorm(self.r)
             # self.right_norm = nn.LayerNorm(self.r)
             self.norm = nn.LayerNorm(self.r, elementwise_affine=False)
+            self.head_norm_std = nn.Parameter(torch.ones(NT, 1))
+            self.left_norm_std = nn.Parameter(torch.ones(NT + T, 1))
+            self.right_norm_std = nn.Parameter(torch.ones(NT + T, 1))
         else:
             self.norm = None
 
@@ -135,9 +159,9 @@ class Nonterm_parameterizer(PCFG_module):
             # head = self.head_norm(head)
             # left = self.left_norm(left)
             # right = self.right_norm(right)
-            head = self.norm(head)
-            left = self.norm(left)
-            right = self.norm(right)
+            head = self.norm(head) * self.head_norm_std
+            left = self.norm(left) * self.left_norm_std
+            right = self.norm(right) * self.right_norm_std
 
         if softmax == "log":
             head = head.log_softmax(-1)

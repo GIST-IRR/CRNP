@@ -150,6 +150,7 @@ class Nonterm_parameterizer(nn.Module):
         norm=None,
         temp=1,
         activation="relu",
+        last_layer_bias=True,
         elementwise_affine=True,
         residual="standard",
     ) -> None:
@@ -182,15 +183,15 @@ class Nonterm_parameterizer(nn.Module):
         elif residual == "bilinear":
             residual = Bilinear_ResLayer
 
-        if mlp_mode == "standard" or mlp_mode == "single":
+        if mlp_mode == "standard":
             if self.shared_nonterm and self.shared_term:
                 if compose_fn == "compose":
                     self.children_compose = nn.Linear(self.dim * 2, self.dim)
                 elif compose_fn == "expose":
                     self.parent_expose = nn.Linear(self.dim, self.dim * 2)
             else:
-                # self.rule_mlp = nn.Linear(self.dim, (self.NT_T) ** 2)
                 self.rule_mlp = nn.Sequential(
+                    nn.Linear(self.dim, self.h_dim),
                     residual(
                         self.h_dim,
                         self.h_dim,
@@ -205,9 +206,15 @@ class Nonterm_parameterizer(nn.Module):
                         norm=norm,
                         elementwise_affine=elementwise_affine,
                     ),
-                    nn.Linear(self.dim, (self.NT_T) ** 2),
+                    nn.Linear(
+                        self.dim,
+                        (self.NT_T) ** 2,
+                        bias=last_layer_bias,
+                    ),
                 )
                 self.register_parameter("children_compose", None)
+        elif mlp_mode == "single":
+            self.rule_mlp = nn.Sequential(nn.Linear(self.dim, self.NT_T**2))
         elif mlp_mode == "cosine similarity":
             self.rule_mlp = nn.CosineSimilarity(dim=-1)
             if not self.shared_term:

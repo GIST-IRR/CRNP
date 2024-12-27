@@ -12,7 +12,7 @@ class ParseFocusing:
             if self.pretrained_models is not None:
                 self.prepare_trees(self.pretrained_models)
             else:
-                self.parse_trees = []
+                self.parse_trees = None
 
     def prepare_trees(self, model_paths):
         self.parse_trees = []
@@ -96,7 +96,10 @@ class ParseFocusing:
     ):
         words = input["word"]
 
-        tree_mask = self.get_pretrained_tree_mask(words)
+        if self.parse_trees is not None:
+            tree_mask = self.get_pretrained_tree_mask(words)
+        else:
+            tree_mask = None
 
         self.rules = self.forward(input)
         rules = self.batchify(self.rules, words)

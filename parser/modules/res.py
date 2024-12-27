@@ -37,6 +37,8 @@ class ResLayer(nn.Module):
         elementwise_affine=True,
     ):
         super(ResLayer, self).__init__()
+        self.activation = activation
+
         if activation == "relu":
             activation = nn.ReLU
         elif activation == "tanh":
@@ -58,7 +60,7 @@ class ResLayer(nn.Module):
                 nn.Linear(in_dim, out_dim),
                 activation(),
                 nn.Linear(out_dim, out_dim),
-                activation(),
+                # activation(),
             )
         else:
             self.linear = nn.Sequential(
@@ -67,11 +69,14 @@ class ResLayer(nn.Module):
                 activation(),
                 nn.Linear(out_dim, out_dim),
                 norm(out_dim, elementwise_affine=elementwise_affine),
-                activation(),
+                # activation(),
             )
+        self.last_activation = activation()
 
     def forward(self, x):
-        return self.linear(x) + x
+        # if self.activation == "sine":
+        #     x = torch.sin(x)
+        return self.last_activation(self.linear(x) + x)
 
 
 class Bilinear_ResLayer(nn.Module):

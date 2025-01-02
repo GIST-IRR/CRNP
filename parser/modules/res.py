@@ -35,9 +35,11 @@ class ResLayer(nn.Module):
         activation="relu",
         norm=None,
         elementwise_affine=True,
+        add_first=False,
     ):
         super(ResLayer, self).__init__()
         self.activation = activation
+        self.add_first = add_first
 
         if activation == "relu":
             activation = nn.ReLU
@@ -76,7 +78,10 @@ class ResLayer(nn.Module):
     def forward(self, x):
         # if self.activation == "sine":
         #     x = torch.sin(x)
-        return self.last_activation(self.linear(x) + x)
+        if self.add_first:
+            return self.last_activation(self.linear(x) + x)
+        else:
+            return x + self.last_activation(self.linear(x))
 
 
 class Bilinear_ResLayer(nn.Module):

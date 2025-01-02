@@ -12,7 +12,7 @@ from ..pcfgs.tdpcfg import TDPCFG
 from ..modules.res import ResLayer, Sine
 
 
-class Nonterm_parameterizer(PCFG_module):
+class Nonterm_parameterizer(nn.Module):
     def __init__(
         self,
         dim,
@@ -182,9 +182,11 @@ class TNPCFG(NeuralPCFG):
 
     def _set_configs(self, args):
         super()._set_configs(args)
-        self.r = getattr(args, "r_dim", 1000)
+        self.r = getattr(args, "r_dim", 200)
         self.word_emb_size = getattr(args, "word_emb_size", 200)
         self.rank_proj = getattr(args, "rank_proj", False)
+
+        self.init = getattr(args, "init", "no_init")
 
     def _init_grammar(self):
         self._embedding_sharing()

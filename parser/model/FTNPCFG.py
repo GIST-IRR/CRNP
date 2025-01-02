@@ -7,6 +7,12 @@ class FTNPCFG(TNPCFG):
         super(FTNPCFG, self).__init__(args)
         self.pcfg = Fastest_TDPCFG()
 
+    def _set_configs(self, args):
+        super()._set_configs(args)
+        self.r = getattr(args, "r_dim", 1000)
+        self.rank_proj = getattr(args, "rank_proj", True)
+        self.init = getattr(args, "init", "xavier_normal")
+
     def forward(self, input=None, **kwargs):
         root = self.root()
         unary = self.terms()

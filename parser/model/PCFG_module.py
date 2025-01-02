@@ -312,6 +312,8 @@ class PCFG_module(nn.Module):
 
     # Module tools
     def _initialize(self, mode="xavier_uniform", value=0.0):
+        if mode is "no_init":
+            return
         # Original Method
         for n, p in self.named_parameters():
             if n in self._no_initialize:

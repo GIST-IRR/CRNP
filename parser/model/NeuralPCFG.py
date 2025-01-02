@@ -20,12 +20,13 @@ class NeuralPCFG(PCFG_module):
 
         self._set_configs(args)
         self._init_grammar()
-        self._initialize()
+        self._initialize(self.init)
 
     def _set_configs(self, args):
         super()._set_configs(args)
 
         self.s_dim = getattr(args, "s_dim", 256)
+        self.init = getattr(args, "init", "xavier_uniform")
         self.dropout = getattr(args, "dropout", 0.0)
 
         self.temperature = getattr(args, "temperature", 1.0)
@@ -138,9 +139,7 @@ class NeuralPCFG(PCFG_module):
         self.rules["word"] = input["word"]
 
         if partition:
-            result = self.pcfg(
-                self.rules, self.rules["unary"], lens=input["seq_len"], topk=1
-            )
+            result = self.pcfg(self.rules, lens=input["seq_len"], topk=1)
             self.pf = self.part(
                 self.rules, lens=input["seq_len"], mode=self.mode
             )
@@ -150,7 +149,6 @@ class NeuralPCFG(PCFG_module):
         else:
             result = self.pcfg(
                 self.rules,
-                self.rules["unary"],
                 lens=input["seq_len"],
                 dropout=self.dropout,
             )
@@ -173,7 +171,6 @@ class NeuralPCFG(PCFG_module):
         if decode_type == "viterbi":
             result = self.pcfg(
                 rules,
-                rules["unary"],
                 lens=lens,
                 viterbi=True,
                 mbr=False,
@@ -182,7 +179,6 @@ class NeuralPCFG(PCFG_module):
         elif decode_type == "mbr":
             result = self.pcfg(
                 rules,
-                rules["unary"],
                 lens=lens,
                 viterbi=False,
                 mbr=True,

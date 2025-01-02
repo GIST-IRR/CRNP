@@ -107,7 +107,6 @@ class ParseFocusing:
 
         result = self.pcfg(
             rules,
-            rules["unary"],
             lens=input["seq_len"],
             tree=tree_mask,
         )

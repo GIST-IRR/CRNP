@@ -64,7 +64,7 @@ class Nonterm_parameterizer(PCFG_module):
             self.right_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.dim),
             )
-            if not isinstance(norm, str):
+            if isinstance(norm, nn.Module):
                 self.parent_mlp.append(
                     norm(self.dim, elementwise_affine=elementwise_affine)
                 )
@@ -308,9 +308,7 @@ class TNPCFG(NeuralPCFG):
         self.rules = self.forward()
         rules = self.batchify(self.rules, words)
 
-        result = self.pcfg(
-            rules, rules["unary"], lens=input["seq_len"], label=label
-        )
+        result = self.pcfg(rules, lens=input["seq_len"], label=label)
         # Partition function
         if partition:
             self.pf = self.part(rules, input["seq_len"], mode=self.mode)

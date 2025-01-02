@@ -21,16 +21,16 @@ class PCFG_base(nn.Module):
     def _inside_topk(self):
         raise NotImplementedError
 
-    def forward(self, rules, terms, lens, topk=None, **kwargs):
+    def forward(self, rules, lens, topk=None, **kwargs):
         if topk:
-            return self._inside_topk(rules, terms, lens, topk=topk, **kwargs)
+            return self._inside_topk(rules, lens, topk=topk, **kwargs)
         elif "tree" in kwargs.keys():
-            return self._inside_one(rules, terms, lens, **kwargs)
+            return self._inside_one(rules, lens, **kwargs)
         else:
             if isinstance(kwargs.get("w2T", None), torch.Tensor):
-                return self._inside_weighted(rules, terms, lens, **kwargs)
+                return self._inside_weighted(rules, lens, **kwargs)
             else:
-                return self._inside(rules, terms, lens, **kwargs)
+                return self._inside(rules, lens, **kwargs)
 
         return result
 

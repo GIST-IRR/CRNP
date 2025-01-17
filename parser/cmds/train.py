@@ -14,7 +14,7 @@ import multiprocessing as mp
 from pathlib import Path
 import math
 import pickle
-from utils import tensor_to_heatmap
+from utils import tensor_to_heatmap, span_to_tree_with_sent
 
 import torch_support.reproducibility as reproducibility
 from torch_support.train_support import get_logger
@@ -23,9 +23,104 @@ from torch_support.load_model import (
     get_model_args,
     get_optimizer_args,
 )
+from parser.cmds.log import log_weight_histogram, log_rule_prob
 
 
 class Train(CMD):
+    def log_per_step(
+        self, dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
+    ):
+        pass
+
+    def log_per_epoch(
+        self, dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
+    ):
+        # Visualization
+        heatmap_dir = Path(self.args.save_dir) / "heatmap"
+        for k in self.total_metrics.keys():
+            mp.Process(
+                target=tensor_to_heatmap,
+                args=(self.model.metrics[k],),
+                kwargs={
+                    "dirname": heatmap_dir,
+                    "filename": f"{k}_{self.iter}.png",
+                },
+            )
+
+        # F1 score for each epoch
+        tag = "valid"
+        metric_list = {
+            "Likelihood": dev_ll.score,
+            "F1": dev_f1_metric.sentence_uf1,
+            "Exact": dev_f1_metric.sentence_ex,
+        }
+        if self.left_binarization:
+            metric_list.update(
+                {
+                    "F1_left": dev_left_metric.sentence_uf1,
+                    "Exact_left": dev_left_metric.sentence_ex,
+                }
+            )
+        if self.right_binarization:
+            metric_list.update(
+                {
+                    "F1_right": dev_right_metric.sentence_uf1,
+                    "Exact_right": dev_right_metric.sentence_ex,
+                }
+            )
+
+        for k, v in metric_list.items():
+            self.writer.add_scalar(f"{tag}/{k}", v, self.epoch)
+
+        metric_dict = {
+            "f1_length": dev_f1_metric.sentence_uf1_l,
+            "Ex_length": dev_f1_metric.sentence_ex_l,
+            "f1_left_length": dev_left_metric.sentence_uf1_l,
+            "Ex_left_length": dev_left_metric.sentence_ex_l,
+            "f1_right_length": dev_right_metric.sentence_uf1_l,
+            "Ex_right_length": dev_right_metric.sentence_ex_l,
+            # "f1_depth": dev_f1_metric.sentence_uf1_d,
+            # "Ex_depth": dev_f1_metric.sentence_ex_d,
+            # "f1_left_depth": dev_left_metric.sentence_uf1_d,
+            # "Ex_left_depth": dev_left_metric.sentence_ex_d,
+            # "f1_right_depth": dev_right_metric.sentence_uf1_d,
+            # "Ex_right_depth": dev_right_metric.sentence_ex_d,
+        }
+
+        for k, v in metric_dict.items():
+            for i, val in v.items():
+                self.writer.add_scalar(f"{tag}/{k}", val, i)
+
+        # distribution of estimated span depth
+        self.estimated_depth = dict(sorted(self.estimated_depth.items()))
+        for k, v in self.estimated_depth.items():
+            self.writer.add_scalar(
+                "valid/estimated_depth", v / dev_f1_metric.n, k
+            )
+
+        # Model weight norm
+        if getattr(self.args.train, "vector_histogram", False):
+            log_weight_histogram(self.writer, self.model, self.epoch)
+        # Rule probability distribution projection
+        if getattr(self.args.train, "rule_embeddings", False):
+            log_rule_prob(self.writer, self.model, self.epoch)
+
+        # Log parse tree
+        # tree_idx = torch.randint(0, len(self.parse_trees), 1).item()
+        tree_idx = 0
+        tree = self.parse_trees[tree_idx]
+
+        from nltk.tree.prettyprinter import TreePrettyPrinter
+
+        gold_tree = span_to_tree_with_sent(tree["gold_tree"], tree["sentence"])
+        pred_tree = span_to_tree_with_sent(tree["pred_tree"], tree["sentence"])
+        self.writer.add_text(
+            "gold_tree", TreePrettyPrinter(gold_tree).text(), self.epoch
+        )
+        self.writer.add_text(
+            "pred_tree", TreePrettyPrinter(pred_tree).text(), self.epoch
+        )
+
     def __call__(self, args):
         self.args = args
         self.device = args.device
@@ -71,14 +166,16 @@ class Train(CMD):
 
         # Setup logger
         console_level = args.get("console_level", "INFO")
-        log = get_logger(args, console_level=console_level)
+        self.log = get_logger(args, console_level=console_level)
         if not hasattr(args, "seed"):
-            log.info(f"seed: {torch.initial_seed()}")
-        log.info("Create the model")
-        log.info(f"{self.model}\n")
+            self.log.info(f"seed: {torch.initial_seed()}")
+        self.log.info("Create the model")
+        self.log.info(f"{self.model}\n")
         total_time = timedelta()
         best_e, best_metric = 1, Metric()
-        log.info(self.optimizer)
+        self.log.info(self.optimizer)
+
+        # Setup Validation
         eval_max_len = getattr(args.test, "max_len", None)
         eval_loader = dataset.val_dataloader(max_len=eval_max_len)
 
@@ -95,8 +192,10 @@ class Train(CMD):
 
         # Arguments for validation
         eval_depth = getattr(test_arg, "eval_depth", False)
-        left_binarization = getattr(test_arg, "left_binarization", False)
-        right_binarization = getattr(test_arg, "right_binarization", False)
+        self.left_binarization = getattr(test_arg, "left_binarization", False)
+        self.right_binarization = getattr(
+            test_arg, "right_binarization", False
+        )
 
         # iteration setup
         self.num_batch = len(
@@ -106,11 +205,11 @@ class Train(CMD):
             train_arg.max_epoch = math.ceil(
                 train_arg.total_iter / self.num_batch
             )
-            log.info(
+            self.log.info(
                 f"num of batch: {self.num_batch}, max epoch: {train_arg.max_epoch}"
             )
         train_arg.total_iter = train_arg.max_epoch * self.num_batch
-        log.info(f"total iter: {train_arg.total_iter}")
+        self.log.info(f"total iter: {train_arg.total_iter}")
 
         if getattr(train_arg, "dambda_warmup", False):
             train_arg.warmup_iter = int(
@@ -122,7 +221,7 @@ class Train(CMD):
             train_arg.warmup_end = int(
                 train_arg.total_iter * (train_arg.dambda_warmup + 0.1)
             )
-            log.info(
+            self.log.info(
                 f"warmup start: {train_arg.warmup_start}, middle: {train_arg.warmup_iter}, end: {train_arg.warmup_end}"
             )
 
@@ -182,18 +281,7 @@ class Train(CMD):
             start = datetime.now()
             self.train(train_loader_autodevice)
 
-            # Visualization
-            heatmap_dir = Path(self.args.save_dir) / "heatmap"
-            for k in self.total_metrics.keys():
-                mp.Process(
-                    target=tensor_to_heatmap,
-                    args=(self.model.metrics[k],),
-                    kwargs={
-                        "dirname": heatmap_dir,
-                        "filename": f"{k}_{self.iter}.png",
-                    },
-                )
-            log.info(f"Epoch {epoch} / {train_arg.max_epoch}:")
+            self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
 
             # Evaluation
             (
@@ -206,63 +294,17 @@ class Train(CMD):
                 eval_loader_autodevice,
                 decode_type=args.test.decode,
                 eval_depth=eval_depth,
-                left_binarization=left_binarization,
-                right_binarization=right_binarization,
+                left_binarization=self.left_binarization,
+                right_binarization=self.right_binarization,
                 rule_update=True,
             )
-            log.info(f"{'dev f1:':6}   {dev_f1_metric}")
-            log.info(f"{'dev ll:':6}   {dev_ll}")
+            self.log.info(f"{'dev f1:':6}   {dev_f1_metric}")
+            self.log.info(f"{'dev ll:':6}   {dev_ll}")
 
-            # F1 score for each epoch
-            tag = "valid"
-            metric_list = {
-                "Likelihood": dev_ll.score,
-                "F1": dev_f1_metric.sentence_uf1,
-                "Exact": dev_f1_metric.sentence_ex,
-            }
-            if left_binarization:
-                metric_list.update(
-                    {
-                        "F1_left": dev_left_metric.sentence_uf1,
-                        "Exact_left": dev_left_metric.sentence_ex,
-                    }
-                )
-            if right_binarization:
-                metric_list.update(
-                    {
-                        "F1_right": dev_right_metric.sentence_uf1,
-                        "Exact_right": dev_right_metric.sentence_ex,
-                    }
-                )
-
-            for k, v in metric_list.items():
-                self.writer.add_scalar(f"{tag}/{k}", v, epoch)
-
-            metric_dict = {
-                "f1_length": dev_f1_metric.sentence_uf1_l,
-                "Ex_length": dev_f1_metric.sentence_ex_l,
-                "f1_left_length": dev_left_metric.sentence_uf1_l,
-                "Ex_left_length": dev_left_metric.sentence_ex_l,
-                "f1_right_length": dev_right_metric.sentence_uf1_l,
-                "Ex_right_length": dev_right_metric.sentence_ex_l,
-                # "f1_depth": dev_f1_metric.sentence_uf1_d,
-                # "Ex_depth": dev_f1_metric.sentence_ex_d,
-                # "f1_left_depth": dev_left_metric.sentence_uf1_d,
-                # "Ex_left_depth": dev_left_metric.sentence_ex_d,
-                # "f1_right_depth": dev_right_metric.sentence_uf1_d,
-                # "Ex_right_depth": dev_right_metric.sentence_ex_d,
-            }
-
-            for k, v in metric_dict.items():
-                for i, val in v.items():
-                    self.writer.add_scalar(f"{tag}/{k}", val, i)
-
-            # distribution of estimated span depth
-            self.estimated_depth = dict(sorted(self.estimated_depth.items()))
-            for k, v in self.estimated_depth.items():
-                self.writer.add_scalar(
-                    "valid/estimated_depth", v / dev_f1_metric.n, k
-                )
+            # Logging
+            self.log_per_epoch(
+                dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
+            )
 
             t = datetime.now() - start
 
@@ -277,9 +319,9 @@ class Train(CMD):
                     optimizer=self.optimizer.state_dict(),
                     epoch=epoch,
                 )
-                log.info(f"{t}s elapsed (saved)\n")
+                self.log.info(f"{t}s elapsed (saved)\n")
             else:
-                log.info(f"{t}s elapsed\n")
+                self.log.info(f"{t}s elapsed\n")
 
             # save the last model
             reproducibility.save(
@@ -320,8 +362,8 @@ class Train(CMD):
                 train_loader_autodevice,
                 decode_type=args.test.decode,
                 eval_depth=eval_depth,
-                left_binarization=left_binarization,
-                right_binarization=right_binarization,
+                left_binarization=self.left_binarization,
+                right_binarization=self.right_binarization,
             )
 
             tree_path = getattr(self.args.tree, "save_dir", self.args.save_dir)
@@ -334,5 +376,5 @@ class Train(CMD):
 
         self.writer.flush()
         self.writer.close()
-        log.info("End Training.")
-        log.info(f"The model is saved in the directory: {args.save_dir}")
+        self.log.info("End Training.")
+        self.log.info(f"The model is saved in the directory: {args.save_dir}")

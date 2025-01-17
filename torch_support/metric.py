@@ -6,8 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def entropy(p):
-    return -torch.sum(p.exp() * p, dim=-1)
+def entropy(p, logit=True, dim=-1):
+    if logit:
+        return -torch.sum(p.exp() * p, dim=dim)
+    else:
+        return -torch.sum(p * p.log(), dim=dim)
 
 
 def cross_entropy(p, q):

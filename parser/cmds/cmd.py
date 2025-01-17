@@ -101,6 +101,7 @@ class CMD(object):
             position=0,
             leave=True,
             desc="Training",
+            dynamic_ncols=True,
         )
         for x, y in t:
             # Parameter update
@@ -222,6 +223,7 @@ class CMD(object):
             position=0,
             leave=True,
             desc="Validation",
+            dynamic_ncols=True,
         )
 
         depth = (

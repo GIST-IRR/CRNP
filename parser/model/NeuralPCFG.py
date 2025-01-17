@@ -135,20 +135,18 @@ class NeuralPCFG(PCFG_module):
 
         # Calculate rule distributions
         self.rules = self.forward(input)
-        self.rules = self.batchify(self.rules, words)
-        self.rules["word"] = input["word"]
+        rules = self.batchify(self.rules, words)
+        rules["word"] = input["word"]
 
         if partition:
-            result = self.pcfg(self.rules, lens=input["seq_len"], topk=1)
-            self.pf = self.part(
-                self.rules, lens=input["seq_len"], mode=self.mode
-            )
+            result = self.pcfg(rules, lens=input["seq_len"], topk=1)
+            self.pf = self.part(rules, lens=input["seq_len"], mode=self.mode)
             if soft:
                 return -result["partition"].mean(), self.pf.mean()
             result["partition"] = result["partition"] - self.pf
         else:
             result = self.pcfg(
-                self.rules,
+                rules,
                 lens=input["seq_len"],
                 dropout=self.dropout,
             )

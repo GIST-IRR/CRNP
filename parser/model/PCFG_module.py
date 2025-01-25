@@ -1,4 +1,5 @@
 from argparse import ArgumentError
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,6 +23,8 @@ class UnaryRule_parameterizer(nn.Module):
         orthogonal=False,
         activation="relu",
         mlp_mode="standard",
+        num_res_blocks=2,
+        scale=False,
         softmax=True,
         norm=None,
         temp=1,
@@ -35,6 +38,7 @@ class UnaryRule_parameterizer(nn.Module):
         self.n_parent = n_parent
         self.n_child = n_child
 
+        self.scale = scale
         self.softmax = softmax
         self.mlp_mode = mlp_mode
         self.temp = temp
@@ -63,20 +67,16 @@ class UnaryRule_parameterizer(nn.Module):
         if mlp_mode == "standard":
             self.rule_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.h_dim),
-                residual(
-                    self.h_dim,
-                    self.h_dim,
-                    activation=activation,
-                    norm=norm,
-                    elementwise_affine=elementwise_affine,
-                ),
-                residual(
-                    self.h_dim,
-                    self.h_dim,
-                    activation=activation,
-                    norm=norm,
-                    elementwise_affine=elementwise_affine,
-                ),
+                *[
+                    residual(
+                        self.h_dim,
+                        self.h_dim,
+                        activation=activation,
+                        norm=norm,
+                        elementwise_affine=elementwise_affine,
+                    )
+                    for _ in range(num_res_blocks)
+                ],
                 nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias),
             )
         elif mlp_mode == "single":
@@ -129,6 +129,9 @@ class UnaryRule_parameterizer(nn.Module):
             rule_prob = self.norm(rule_prob)
             rule_prob = self.norm_std * rule_prob
 
+        if self.scale:
+            rule_prob = rule_prob / np.sqrt(rule_prob.size(-1))
+
         if self.softmax:
             rule_prob = rule_prob.log_softmax(-1)
         return rule_prob
@@ -145,7 +148,9 @@ class Nonterm_parameterizer(nn.Module):
         nonterm_emb=None,
         term_emb=None,
         mlp_mode="standard",
+        num_res_blocks=2,
         compose_fn="compose",
+        scale=False,
         softmax=True,
         norm=None,
         temp=1,
@@ -161,6 +166,7 @@ class Nonterm_parameterizer(nn.Module):
         self.T = T
         self.NT_T = self.NT + self.T
 
+        self.scale = scale
         self.softmax = softmax
 
         self.temperature = temperature
@@ -192,22 +198,18 @@ class Nonterm_parameterizer(nn.Module):
             else:
                 self.rule_mlp = nn.Sequential(
                     nn.Linear(self.dim, self.h_dim),
-                    residual(
-                        self.h_dim,
-                        self.h_dim,
-                        activation=activation,
-                        norm=norm,
-                        elementwise_affine=elementwise_affine,
-                    ),
-                    residual(
-                        self.h_dim,
-                        self.h_dim,
-                        activation=activation,
-                        norm=norm,
-                        elementwise_affine=elementwise_affine,
-                    ),
+                    *[
+                        residual(
+                            self.h_dim,
+                            self.h_dim,
+                            activation=activation,
+                            norm=norm,
+                            elementwise_affine=elementwise_affine,
+                        )
+                        for _ in range(num_res_blocks)
+                    ],
                     nn.Linear(
-                        self.dim,
+                        self.h_dim,
                         (self.NT_T) ** 2,
                         bias=last_layer_bias,
                     ),
@@ -295,6 +297,9 @@ class Nonterm_parameterizer(nn.Module):
             nonterm_prob = self.norm(nonterm_prob)
             nonterm_prob = self.norm_std * nonterm_prob
 
+        if self.scale:
+            nonterm_prob = nonterm_prob / np.sqrt(nonterm_prob.size(-1))
+
         if self.softmax:
             nonterm_prob = nonterm_prob / self.temperature
             nonterm_prob = nonterm_prob.log_softmax(-1)
@@ -312,7 +317,7 @@ class PCFG_module(nn.Module):
 
     # Module tools
     def _initialize(self, mode="xavier_uniform", value=0.0):
-        if mode is "no_init":
+        if mode == "no_init":
             return
         # Original Method
         for n, p in self.named_parameters():

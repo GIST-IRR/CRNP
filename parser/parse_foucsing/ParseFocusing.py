@@ -91,7 +91,7 @@ class ParseFocusing:
         partition=False,
         soft=False,
         label=False,
-        reduction="mean",
+        reduction=None,
         **kwargs,
     ):
         words = input["word"]

@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from parser.modules.norm import MeanOnlyLayerNorm
+
 
 class Sine(nn.Module):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
@@ -54,6 +56,8 @@ class ResLayer(nn.Module):
 
         if norm == "layer":
             norm = nn.LayerNorm
+        elif norm == "mo-layer":
+            norm = MeanOnlyLayerNorm
         elif norm == "batch":
             norm = nn.BatchNorm1d
 

@@ -1,6 +1,7 @@
 # ENV and CACHE
 data/
 log/
+wandb/
 .vscode/
 *.pyc
 __pycache__/

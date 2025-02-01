@@ -1,4 +1,6 @@
 from argparse import ArgumentError
+import math
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,8 +9,11 @@ import torch.distributions as dist
 from torch.nn.utils.parametrizations import _Orthogonal
 
 from ..modules.res import ResLayer, Bilinear_ResLayer
+from ..modules.norm import MeanOnlyLayerNorm
 
-import math
+
+def normalize(x, dim=-1):
+    return x - x.mean(dim, keepdim=True)
 
 
 class UnaryRule_parameterizer(nn.Module):
@@ -27,6 +32,7 @@ class UnaryRule_parameterizer(nn.Module):
         scale=False,
         softmax=True,
         norm=None,
+        last_norm=None,
         temp=1,
         last_layer_bias=True,
         elementwise_affine=True,
@@ -98,11 +104,15 @@ class UnaryRule_parameterizer(nn.Module):
             elif mlp_mode == "single":
                 self.rule_mlp.weight = child_emb
 
-        if norm == "batch":
+        if last_norm == "batch":
             self.norm = nn.BatchNorm1d(self.n_child)
-        elif norm == "layer":
+        elif last_norm == "layer":
             self.norm = nn.LayerNorm(self.n_child, elementwise_affine=False)
             self.norm_std = nn.Parameter(torch.ones(self.n_parent, 1))
+        elif last_norm == "mo-layer":
+            self.norm = MeanOnlyLayerNorm(
+                self.n_child, elementwise_affine=False
+            )
         else:
             self.register_parameter("norm", None)
 
@@ -127,7 +137,7 @@ class UnaryRule_parameterizer(nn.Module):
 
         if self.norm is not None:
             rule_prob = self.norm(rule_prob)
-            rule_prob = self.norm_std * rule_prob
+            # rule_prob = self.norm_std * rule_prob
 
         if self.scale:
             rule_prob = rule_prob / np.sqrt(rule_prob.size(-1))
@@ -153,6 +163,7 @@ class Nonterm_parameterizer(nn.Module):
         scale=False,
         softmax=True,
         norm=None,
+        last_norm=None,
         temp=1,
         activation="relu",
         last_layer_bias=True,
@@ -234,11 +245,15 @@ class Nonterm_parameterizer(nn.Module):
         elif mlp_mode == None:
             self.register_module("rule_mlp", None)
 
-        if norm == "batch":
+        if last_norm == "batch":
             self.norm = nn.BatchNorm1d(self.NT_T**2)
-        elif norm == "layer":
+        elif last_norm == "layer":
             self.norm = nn.LayerNorm(self.NT_T**2, elementwise_affine=False)
             self.norm_std = nn.Parameter(torch.ones(self.NT, 1))
+        elif last_norm == "mo-layer":
+            self.norm = MeanOnlyLayerNorm(
+                self.NT_T**2, elementwise_affine=False
+            )
         else:
             self.register_parameter("norm", None)
 
@@ -295,7 +310,7 @@ class Nonterm_parameterizer(nn.Module):
 
         if self.norm is not None:
             nonterm_prob = self.norm(nonterm_prob)
-            nonterm_prob = self.norm_std * nonterm_prob
+            # nonterm_prob = self.norm_std * nonterm_prob
 
         if self.scale:
             nonterm_prob = nonterm_prob / np.sqrt(nonterm_prob.size(-1))
@@ -351,52 +366,6 @@ class PCFG_module(nn.Module):
                     torch.nn.init.xavier_uniform_(p)
                 val = p.mean()
                 torch.nn.init.constant_(p, val)
-        # # Init with mean of each layer
-        # for n, p in self.named_parameters():
-        #     if p.dim() > 1:
-        #         torch.nn.init.xavier_uniform_(p)
-        #     if n.split(".")[0] == "terms":
-        #         val = p.mean()
-        #         torch.nn.init.constant_(p, val)
-        # # Init with mean of each layer for all
-        # for p in self.parameters():
-        #     if p.dim() > 1:
-        #         torch.nn.init.xavier_uniform_(p)
-        #     val = p.mean()
-        #     torch.nn.init.constant_(p, val)
-        # # Init with mean of each layer for all & Fix terms
-        # for n, p in self.named_parameters():
-        #     if p.dim() > 1:
-        #         torch.nn.init.xavier_uniform_(p)
-        #     if n.split(".")[0] == "terms":
-        #         val = p.mean()
-        #         torch.nn.init.constant_(p, val)
-        #         p.requires_grad = False
-        # # Init with mean of each layer for nonterminal
-        # for n, p in self.named_parameters():
-        #     if p.dim() > 1:
-        #         torch.nn.init.xavier_uniform_(p)
-        #     if n.split(".")[0] != "terms":
-        #         val = p.mean()
-        #         torch.nn.init.constant_(p, val)
-        #     else:
-        #         p.requires_grad = False
-        # # Init with mean of each layer for nonterminal & Fix terms
-        # for n, p in self.named_parameters():
-        #     if p.dim() > 1:
-        #         torch.nn.init.xavier_uniform_(p)
-        #     val = p.mean()
-        #     torch.nn.init.constant_(p, val)
-        #     if n.split(".")[0] != "terms":
-        #         p.requires_grad = False
-        #
-        # for n, p in self.named_parameters():
-        #     if p.dim() > 1:
-        #         torch.nn.init.xavier_uniform_(p)
-        #     if n.split(".")[0] == "terms":
-        #         val = p.mean()
-        #         torch.nn.init.constant_(p, val)
-        #         p.requires_grad = False
 
     def _set_configs(self, cfgs):
         self.cfgs = cfgs

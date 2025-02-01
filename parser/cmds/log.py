@@ -1,7 +1,10 @@
 def log_weight_histogram(writer, model, step, tag="train"):
     for k, v in model.named_parameters():
         writer.add_histogram(f"{tag}/{k}", v, step)
-        writer.add_histogram(f"{tag}/{k}.grad", v.grad, step)
+        try:
+            writer.add_histogram(f"{tag}/{k}.grad", v.grad, step)
+        except:
+            pass
 
 
 def log_rule_prob(writer, model, step, tag="train", logit=True):

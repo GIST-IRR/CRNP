@@ -75,9 +75,6 @@ class DataModule:
         # To eval train dataset
         target_fields.append("gold_tree")
 
-        # train_dataset.add_seq_len(field_name="word", new_field_name="seq_len")
-        # val_dataset.add_seq_len(field_name="word", new_field_name="seq_len")
-        # test_dataset.add_seq_len(field_name="word", new_field_name="seq_len")
         train_dataset.add_seq_len(
             field_name="sentence", new_field_name="seq_len"
         )
@@ -89,93 +86,41 @@ class DataModule:
         )
 
         # Binarized gold trees
-        try:
-            train_dataset.add_field(
-                "gold_tree_left",
-                train_data["gold_tree_left"],
-                padder=None,
-                ignore_type=True,
-            )
-            val_dataset.add_field(
-                "gold_tree_left",
-                val_data["gold_tree_left"],
-                padder=None,
-                ignore_type=True,
-            )
-            test_dataset.add_field(
-                "gold_tree_left",
-                test_data["gold_tree_left"],
-                padder=None,
-                ignore_type=True,
-            )
-            target_fields.append("gold_tree_left")
-        except:
-            print("No Left Binarization")
-            pass
-
-        try:
-            train_dataset.add_field(
-                "gold_tree_right",
-                train_data["gold_tree_right"],
-                padder=None,
-                ignore_type=True,
-            )
-            val_dataset.add_field(
-                "gold_tree_right",
-                val_data["gold_tree_right"],
-                padder=None,
-                ignore_type=True,
-            )
-            test_dataset.add_field(
-                "gold_tree_right",
-                test_data["gold_tree_right"],
-                padder=None,
-                ignore_type=True,
-            )
-            target_fields.append("gold_tree_right")
-        except:
-            print("No Right Binarization")
-            pass
+        for tag in ["left", "right"]:
+            try:
+                train_dataset.add_field(
+                    f"gold_tree_{tag}",
+                    train_data[f"gold_tree_{tag}"],
+                    padder=None,
+                    ignore_type=True,
+                )
+                val_dataset.add_field(
+                    f"gold_tree_{tag}",
+                    val_data[f"gold_tree_{tag}"],
+                    padder=None,
+                    ignore_type=True,
+                )
+                test_dataset.add_field(
+                    f"gold_tree_{tag}",
+                    test_data[f"gold_tree_{tag}"],
+                    padder=None,
+                    ignore_type=True,
+                )
+                target_fields.append(f"gold_tree_{tag}")
+            except:
+                print(f"No {tag} binarization")
+                pass
 
         # Depth of trees
-        try:
-            train_dataset.add_field("depth", train_data["depth"], padder=None)
-            val_dataset.add_field("depth", val_data["depth"], padder=None)
-            test_dataset.add_field("depth", test_data["depth"], padder=None)
-            target_fields.append("depth")
-        except:
-            print("No depth")
-            pass
-
-        try:
-            train_dataset.add_field(
-                "depth_left", train_data["depth_left"], padder=None
-            )
-            val_dataset.add_field(
-                "depth_left", val_data["depth_left"], padder=None
-            )
-            test_dataset.add_field(
-                "depth_left", test_data["depth_left"], padder=None
-            )
-            target_fields.append("depth_left")
-        except:
-            print("No depth of left binarization")
-            pass
-
-        try:
-            train_dataset.add_field(
-                "depth_right", train_data["depth_right"], padder=None
-            )
-            val_dataset.add_field(
-                "depth_right", val_data["depth_right"], padder=None
-            )
-            test_dataset.add_field(
-                "depth_right", test_data["depth_right"], padder=None
-            )
-            target_fields.append("depth_right")
-        except:
-            print("No depth of right binarization")
-            pass
+        for tag in ["depth", "depth_left", "depth_right"]:
+            try:
+                train_dataset.add_field(tag, train_data[tag], padder=None)
+                val_dataset.add_field(tag, val_data[tag], padder=None)
+                test_dataset.add_field(tag, test_data[tag], padder=None)
+                target_fields.append(tag)
+            except:
+                print(f"No {tag}")
+                pass
 
         # POS tag of gold trees
         try:

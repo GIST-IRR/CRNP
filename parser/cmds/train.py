@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime, timedelta
+
 from parser.cmds.cmd import CMD
 from parser.helper.metric import LikelihoodMetric, Metric
 from parser.helper.loader_wrapper import DataPrefetcher
@@ -9,6 +10,7 @@ import torch
 from parser.helper.data_module import DataModule
 
 from torch.utils.tensorboard import SummaryWriter
+import wandb
 import multiprocessing as mp
 
 from pathlib import Path
@@ -23,10 +25,36 @@ from torch_support.load_model import (
     get_model_args,
     get_optimizer_args,
 )
+import torch_support.metric as metric
 from parser.cmds.log import log_weight_histogram, log_rule_prob
 
 
 class Train(CMD):
+    def setup_logger(self, args):
+        # Setup logger
+        console_level = args.get("console_level", "INFO")
+        self.log = get_logger(args, console_level=console_level)
+        self.log.info(f"Seed: {args.seed}")
+        self.log.info("Create the model")
+        self.log.info(f"{self.model}\n")
+        self.log.info(self.optimizer)
+
+        # Setup tensorboard writer
+        self.writer = SummaryWriter(args.save_dir)
+
+        # Setup WandB
+        # start a new wandb run to track this script
+        self.run = wandb.init(
+            # set the wandb project where this run will be logged
+            project="neural-grammar-induction",
+            # track hyperparameters and run metadata
+            config=args,
+        )
+        wandb.define_metric("train/step")
+        wandb.define_metric("valid/epoch")
+        wandb.define_metric("train/*", step_metric="train/step")
+        wandb.define_metric("valid/*", step_metric="valid/epoch")
+
     def log_per_step(
         self, dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
     ):
@@ -35,42 +63,111 @@ class Train(CMD):
     def log_per_epoch(
         self, dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
     ):
-        # Visualization
-        heatmap_dir = Path(self.args.save_dir) / "heatmap"
-        for k in self.total_metrics.keys():
-            mp.Process(
-                target=tensor_to_heatmap,
-                args=(self.model.metrics[k],),
-                kwargs={
-                    "dirname": heatmap_dir,
-                    "filename": f"{k}_{self.iter}.png",
-                },
-            )
+        ## Visualization
+        # heatmap_dir = Path(self.args.save_dir) / "heatmap"
+        # for k in self.total_metrics.keys():
+        #     mp.Process(
+        #         target=tensor_to_heatmap,
+        #         args=(self.model.metrics[k],),
+        #         kwargs={
+        #             "dirname": heatmap_dir,
+        #             "filename": f"{k}_{self.iter}.png",
+        #         },
+        #     )
 
         # F1 score for each epoch
         tag = "valid"
+
+        unary_jsd = metric.pairwise_js_div(self.model.rules["unary"])
         metric_list = {
-            "Likelihood": dev_ll.score,
-            "F1": dev_f1_metric.sentence_uf1,
-            "Exact": dev_f1_metric.sentence_ex,
+            "valid/epoch": self.epoch,
+            "valid/avg_likelihood": dev_ll.score,
+            "valid/perplexity": dev_ll.perplexity,
+            "valid/f1": dev_f1_metric.sentence_uf1,
+            "valid/exact": dev_f1_metric.sentence_ex,
+            "valid/unary_local_ppl": metric.local_ppl(
+                self.model.rules["unary"]
+            ),
+            "valid/unary_global_ppl": metric.global_ppl(
+                self.model.rules["unary"]
+            ),
+            "valid/unary_jsd_arithmetic": unary_jsd.mean(),
+            "valid/unary_jsd_geometric": unary_jsd.log().mean().exp(),
         }
+
+        try:
+            binary_jsd = metric.pairwise_js_div(
+                self.model.rules["rule"].flatten(1)
+            )
+            metric_list.update(
+                {
+                    "valid/binary_local_ppl": metric.local_ppl(
+                        self.model.rules["rule"].flatten(1)
+                    ),
+                    "valid/binary_global_ppl": metric.global_ppl(
+                        self.model.rules["rule"].flatten(1)
+                    ),
+                    "valid/binary_jsd_arithmetic": binary_jsd.mean(),
+                    "valid/binary_jsd_geometric": binary_jsd.log()
+                    .mean()
+                    .exp(),
+                }
+            )
+        except:
+            pass
+        try:
+            head_jsd = metric.pairwise_js_div(self.model.rules["head"])
+            left_jsd = metric.pairwise_js_div(self.model.rules["left"].T)
+            right_jsd = metric.pairwise_js_div(self.model.rules["right"].T)
+            metric_list.update(
+                {
+                    "valid/head_local_ppl": metric.local_ppl(
+                        self.model.rules["head"]
+                    ),
+                    "valid/head_global_ppl": metric.global_ppl(
+                        self.model.rules["head"]
+                    ),
+                    "valid/head_jsd_arithmetic": head_jsd.mean(),
+                    "valid/head_jsd_geometric": head_jsd.log().mean().exp(),
+                    "valid/left_local_ppl": metric.local_ppl(
+                        self.model.rules["left"].T
+                    ),
+                    "valid/left_global_ppl": metric.global_ppl(
+                        self.model.rules["left"].T
+                    ),
+                    "valid/left_jsd_arithmetic": left_jsd.mean(),
+                    "valid/left_jsd_geometric": left_jsd.log().mean().exp(),
+                    "valid/right_local_ppl": metric.local_ppl(
+                        self.model.rules["right"].T
+                    ),
+                    "valid/right_global_ppl": metric.global_ppl(
+                        self.model.rules["right"].T
+                    ),
+                    "valid/right_jsd_arithmetic": right_jsd.mean(),
+                    "valid/right_jsd_geometric": right_jsd.log().mean().exp(),
+                }
+            )
+        except:
+            pass
+
         if self.left_binarization:
             metric_list.update(
                 {
-                    "F1_left": dev_left_metric.sentence_uf1,
-                    "Exact_left": dev_left_metric.sentence_ex,
+                    "valid/f1_left": dev_left_metric.sentence_uf1,
+                    "valid/exact_left": dev_left_metric.sentence_ex,
                 }
             )
         if self.right_binarization:
             metric_list.update(
                 {
-                    "F1_right": dev_right_metric.sentence_uf1,
-                    "Exact_right": dev_right_metric.sentence_ex,
+                    "valid/f1_right": dev_right_metric.sentence_uf1,
+                    "valid/exact_right": dev_right_metric.sentence_ex,
                 }
             )
 
         for k, v in metric_list.items():
             self.writer.add_scalar(f"{tag}/{k}", v, self.epoch)
+        self.run.log(metric_list)
 
         metric_dict = {
             "f1_length": dev_f1_metric.sentence_uf1_l,
@@ -121,12 +218,26 @@ class Train(CMD):
             "pred_tree", TreePrettyPrinter(pred_tree).text(), self.epoch
         )
 
+    def setup_warmup(self, train_arg):
+        train_arg.warmup_iter = int(
+            train_arg.total_iter * train_arg.dambda_warmup
+        )
+        train_arg.warmup_start = int(
+            train_arg.total_iter * (train_arg.dambda_warmup - 0.1)
+        )
+        train_arg.warmup_end = int(
+            train_arg.total_iter * (train_arg.dambda_warmup + 0.1)
+        )
+        self.log.info(
+            f"warmup start: {train_arg.warmup_start}, middle: {train_arg.warmup_iter}, end: {train_arg.warmup_end}"
+        )
+        return train_arg
+
     def __call__(self, args):
         self.args = args
         self.device = args.device
 
         # Load pretrained model
-        start_epoch = 1
         if hasattr(args, "pretrained_model"):
             checkpoint = reproducibility.load(args.pretrained_model)
             # Load meta data
@@ -136,10 +247,10 @@ class Train(CMD):
             generator = checkpoint["generator"]
         else:
             checkpoint = {"model": None, "optimizer": None}
-            if hasattr(args, "seed"):
-                worker_init_fn, generator = reproducibility.fix_seed(args.seed)
-            else:
-                worker_init_fn, generator = None, None
+            start_epoch = 1
+            if not hasattr(args, "seed"):
+                args.seed = int(str(torch.initial_seed())[:8])
+            worker_init_fn, generator = reproducibility.fix_seed(args.seed)
 
         # Load dataset
         dataset = DataModule(
@@ -165,22 +276,14 @@ class Train(CMD):
         )
 
         # Setup logger
-        console_level = args.get("console_level", "INFO")
-        self.log = get_logger(args, console_level=console_level)
-        if not hasattr(args, "seed"):
-            self.log.info(f"seed: {torch.initial_seed()}")
-        self.log.info("Create the model")
-        self.log.info(f"{self.model}\n")
+        self.setup_logger(args)
+
         total_time = timedelta()
         best_e, best_metric = 1, Metric()
-        self.log.info(self.optimizer)
 
         # Setup Validation
         eval_max_len = getattr(args.test, "max_len", None)
         eval_loader = dataset.val_dataloader(max_len=eval_max_len)
-
-        # Setup tensorboard writer
-        self.writer = SummaryWriter(args.save_dir)
 
         """
         Training
@@ -212,18 +315,7 @@ class Train(CMD):
         self.log.info(f"total iter: {train_arg.total_iter}")
 
         if getattr(train_arg, "dambda_warmup", False):
-            train_arg.warmup_iter = int(
-                train_arg.total_iter * train_arg.dambda_warmup
-            )
-            train_arg.warmup_start = int(
-                train_arg.total_iter * (train_arg.dambda_warmup - 0.1)
-            )
-            train_arg.warmup_end = int(
-                train_arg.total_iter * (train_arg.dambda_warmup + 0.1)
-            )
-            self.log.info(
-                f"warmup start: {train_arg.warmup_start}, middle: {train_arg.warmup_iter}, end: {train_arg.warmup_end}"
-            )
+            train_arg = self.setup_warmup(train_arg)
 
         # Token setup
         self.pad_token = dataset.word_vocab.word2idx["<pad>"]
@@ -236,10 +328,41 @@ class Train(CMD):
         self.partition = False
         self.total_loss = 0
         self.total_len = 0
-        self.total_metrics = {}
+        # self.total_metrics = {}
         self.dambda = 1
         self.step = 1
         self.temp = 512
+
+        # Evaluation before training
+        self.epoch = 0
+        self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
+        eval_loader_autodevice = DataPrefetcher(
+            eval_loader, device=self.device
+        )
+        (
+            dev_f1_metric,
+            _,
+            dev_ll,
+            dev_left_metric,
+            dev_right_metric,
+        ) = self.evaluate(
+            eval_loader_autodevice,
+            decode_type=args.test.decode,
+            eval_depth=eval_depth,
+            left_binarization=self.left_binarization,
+            right_binarization=self.right_binarization,
+            rule_update=True,
+        )
+        self.log.info(f"{'dev f1:':6}   {dev_f1_metric}")
+        self.log.info(f"{'dev ll:':6}   {dev_ll}")
+
+        # Logging
+        self.log_per_epoch(
+            dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
+        )
+
+        # Watch model
+        wandb.watch(self.model, log="all", log_freq=1)
 
         for epoch in range(start_epoch, train_arg.max_epoch + 1):
             """
@@ -278,12 +401,17 @@ class Train(CMD):
             eval_loader_autodevice = DataPrefetcher(
                 eval_loader, device=self.device
             )
+
             start = datetime.now()
+            self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
+            ##############
+            #  Training  #
+            ##############
             self.train(train_loader_autodevice)
 
-            self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
-
-            # Evaluation
+            ##############
+            # Evaluation #
+            ##############
             (
                 dev_f1_metric,
                 _,
@@ -376,5 +504,6 @@ class Train(CMD):
 
         self.writer.flush()
         self.writer.close()
+        self.run.finish()
         self.log.info("End Training.")
         self.log.info(f"The model is saved in the directory: {args.save_dir}")

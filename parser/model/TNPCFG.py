@@ -31,6 +31,7 @@ class Nonterm_parameterizer(nn.Module):
         self.dim = dim
         self.NT = NT
         self.T = T
+        self.NT_T = self.NT + self.T
         self.r = r
         self.rank_proj = rank_proj
 
@@ -46,9 +47,11 @@ class Nonterm_parameterizer(nn.Module):
 
         if mlp_mode == "single":
             if norm == "layer":
-                norm = nn.LayerNorm
+                mlp_norm = nn.LayerNorm
             elif norm == "batch":
-                norm = nn.BatchNorm1d
+                mlp_norm = nn.BatchNorm1d
+            else:
+                mlp_norm = None
 
             if activation == "relu":
                 activation = nn.ReLU
@@ -64,15 +67,15 @@ class Nonterm_parameterizer(nn.Module):
             self.right_mlp = nn.Sequential(
                 nn.Linear(self.dim, self.dim),
             )
-            if isinstance(norm, nn.Module):
+            if mlp_norm is not None:
                 self.parent_mlp.append(
-                    norm(self.dim, elementwise_affine=elementwise_affine)
+                    mlp_norm(self.dim, elementwise_affine=elementwise_affine)
                 )
                 self.left_mlp.append(
-                    norm(self.dim, elementwise_affine=elementwise_affine)
+                    mlp_norm(self.dim, elementwise_affine=elementwise_affine)
                 )
                 self.right_mlp.append(
-                    norm(self.dim, elementwise_affine=elementwise_affine)
+                    mlp_norm(self.dim, elementwise_affine=elementwise_affine)
                 )
             self.parent_mlp.append(activation())
             self.left_mlp.append(activation())
@@ -137,12 +140,20 @@ class Nonterm_parameterizer(nn.Module):
             # self.head_norm = nn.LayerNorm(self.r)
             # self.left_norm = nn.LayerNorm(self.r)
             # self.right_norm = nn.LayerNorm(self.r)
-            self.norm = nn.LayerNorm(self.r, elementwise_affine=False)
-            self.head_norm_std = nn.Parameter(torch.ones(NT, 1))
-            self.left_norm_std = nn.Parameter(torch.ones(NT + T, 1))
-            self.right_norm_std = nn.Parameter(torch.ones(NT + T, 1))
+            # self.h_norm = nn.LayerNorm(self.r, elementwise_affine=False)
+            # self.c_norm = nn.LayerNorm(self.r, elementwise_affine=False)
+
+            # self.head_norm_std = nn.Parameter(torch.ones(NT, 1))
+            # self.left_norm_std = nn.Parameter(torch.ones(NT + T, 1))
+            # self.right_norm_std = nn.Parameter(torch.ones(NT + T, 1))
+            def normalize(x):
+                return x - x.mean(-1, keepdim=True)
+
+            self.h_norm = normalize
+            self.c_norm = normalize
         else:
-            self.norm = None
+            self.register_parameter("h_norm", None)
+            self.register_parameter("c_norm", None)
 
     def forward(self, softmax="log"):
         rule_state_emb = torch.cat([self.nonterm_emb, self.term_emb], dim=0)
@@ -155,13 +166,13 @@ class Nonterm_parameterizer(nn.Module):
             left = self.rank_proj(left)
             right = self.rank_proj(right)
 
-        if self.norm:
-            # head = self.head_norm(head)
-            # left = self.left_norm(left)
-            # right = self.right_norm(right)
-            head = self.norm(head) * self.head_norm_std
-            left = self.norm(left) * self.left_norm_std
-            right = self.norm(right) * self.right_norm_std
+        if self.h_norm and self.c_norm:
+            head = self.h_norm(head)
+            left = self.c_norm(left)
+            right = self.c_norm(right)
+            # head = self.h_norm(head) * self.head_norm_std
+            # left = self.c_norm(left.T) * self.left_norm_std
+            # right = self.c_norm(right.T) * self.right_norm_std
 
         if softmax == "log":
             head = head.log_softmax(-1)
@@ -317,7 +328,7 @@ class TNPCFG(NeuralPCFG):
             if soft:
                 return -result["partition"].mean(), self.pf.mean()
             result["partition"] = result["partition"] - self.pf
-        return -result["partition"].mean()
+        return -result["partition"]
 
     def evaluate(
         self,

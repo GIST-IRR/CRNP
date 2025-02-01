@@ -9,6 +9,8 @@ from distutils.dir_util import copy_tree
 import traceback
 import logging
 
+from numpy import r_
+import wand
 from yaml import load, dump
 
 try:
@@ -57,7 +59,9 @@ def get_config_from(*path, easydict=True, verbose=False):
         try:
             config.update(conf)
         except:
-            raise ValueError(f"config file should be a dict, but got {type(config)}")
+            raise ValueError(
+                f"config file should be a dict, but got {type(config)}"
+            )
     # Update configuration paths
     if len(path) == 1:
         config.update({"conf": str(p)})
@@ -143,7 +147,9 @@ def create_save_path(args, copy_config=True, copy_code=True):
 def _create_save_path(tag, path, copy_config_from=None, copy_code_from=None):
     path = Path(path)
     # name setup
-    suffix = f"/{tag}" + time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime(time.time()))
+    suffix = f"/{tag}" + time.strftime(
+        "%Y-%m-%d-%H_%M_%S", time.localtime(time.time())
+    )
     saved_name = path.stem + suffix
     path = path / suffix
 
@@ -189,7 +195,10 @@ def get_logger(
 
     # create file handler
     handler = logging.FileHandler(
-        os.path.join(args.save_dir if path is None else path, f"{log_name}.log"), "w"
+        os.path.join(
+            args.save_dir if path is None else path, f"{log_name}.log"
+        ),
+        "w",
     )
     handler.setLevel(file_level)
     handler.setFormatter(formatter)
@@ -214,39 +223,43 @@ def command_decorator(command):
         command (class or function): main function that you want to use. If you want to use class, you should add __call__ function to the class.
     """
 
+    def exit_cmd(args):
+        while True:
+            cmd = input("Do you want to save the model? [y/n]: ")
+            if cmd == "y":
+                print("Log directory have been saved.")
+                break
+            elif cmd == "n":
+                shutil.rmtree(args.save_dir)
+                print(
+                    "You have successfully delete the created log directory."
+                )
+                # if hasattr(command, "run"):
+                #     import wandb
+
+                #     api = wandb.Api()
+                #     run = command.run
+                #     r_id = run.id
+                #     r_entity = run.entity
+                #     r_project = run.project
+                #     run.finish()
+
+                #     run = api.run(f"{r_entity}/{r_project}/{r_id}")
+                #     run.delete()
+                break
+            else:
+                print("Please enter 'y' or 'n'.")
+                continue
+
     def wrapper(args):
         try:
             create_save_path(args)
             result = command(args)
             return result
         except KeyboardInterrupt:
-            while True:
-                print(f"Save dir: {args.save_dir}")
-                cmd = input("Do you want to save the model? [y/n]: ")
-                if cmd == "y":
-                    print("Log directory have been saved.")
-                    break
-                elif cmd == "n":
-                    shutil.rmtree(args.save_dir)
-                    print("You have successfully delete the created log directory.")
-                    break
-                else:
-                    print("Please enter 'y' or 'n'.")
-                    continue
+            exit_cmd(args)
         except Exception:
             traceback.print_exc()
-            while True:
-                print(f"Save dir: {args.save_dir}")
-                cmd = input("Do you want to save the model? [y/n]: ")
-                if cmd == "y":
-                    print("Log directory have been saved.")
-                    break
-                elif cmd == "n":
-                    shutil.rmtree(args.save_dir)
-                    print("You have successfully delete the created log directory.")
-                    break
-                else:
-                    print("Please enter 'y' or 'n'.")
-                    continue
+            exit_cmd(args)
 
     return wrapper

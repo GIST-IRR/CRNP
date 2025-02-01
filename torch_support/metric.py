@@ -1,9 +1,25 @@
+import re
 import sys
 import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def uniform_variance(x):
+    fan_in, fan_out = x.shape
+    bound = math.sqrt(6 / (fan_in + fan_out))
+    return math.sqrt(math.pow(bound * 2, 2) / 12)
+
+
+def geometric_mean(x, min=None):
+    dtype = x.dtype
+    # If you not specify min,
+    # it will be the smallest positive number of the dtype.
+    if min is None:
+        min = torch.finfo(dtype).tiny
+    return x.clamp(min=min).log().mean().exp()
 
 
 def entropy(p, logit=True, dim=-1):
@@ -13,17 +29,44 @@ def entropy(p, logit=True, dim=-1):
         return -torch.sum(p * p.log(), dim=dim)
 
 
+def perplexity(p, logit=True, dim=-1, normalize=False):
+    if normalize:
+        d = p.shape[dim]
+        return entropy(p, logit=logit, dim=dim).exp() / d
+    else:
+        return entropy(p, logit=logit, dim=dim).exp()
+
+
+def local_ppl(p, logit=True, dim=-1):
+    return perplexity(p, logit=logit, dim=dim).mean()
+
+
+def global_ppl(p, logit=True, dim=-1):
+    if logit:
+        n = p.shape[0]
+        p = p.logsumexp(0) - math.log(n)
+    else:
+        p = p.mean(dim=0)
+    return perplexity(p, logit=logit, dim=dim)
+
+
 def cross_entropy(p, q):
     return -torch.sum(p.exp() * q, dim=-1)
 
 
-def kl_div(p, q):
-    return torch.sum(p.exp() * (p - q), dim=-1)
+def kl_div(p, q, logit=True):
+    if logit:
+        return torch.sum(p.exp() * (p - q), dim=-1)
+    else:
+        return torch.sum(p * (p / q).log(), dim=-1)
 
 
-def jensen_shannon_divergence(p, q):
-    m = 0.5 * (p + q)
-    return 0.5 * (kl_div(p, m) + kl_div(q, m))
+def jensen_shannon_divergence(p, q, logit=True):
+    if logit:
+        m = torch.stack([p, q], dim=0).logsumexp(0) - math.log(2)
+    else:
+        m = 0.5 * (p + q)
+    return 0.5 * (kl_div(p, m, logit=logit) + kl_div(q, m, logit=logit))
 
 
 def pairwise_cross_entropy(p, q=None, log=False, batch=False):
@@ -60,21 +103,20 @@ def pairwise_kl_divergence(p, q=None, log=False, batch=False):
     return torch.sum(e_p * p_q, dim=-1)
 
 
-def pairwise_js_div(p):
-    n, k = p.shape
-    m = (p.unsqueeze(1) + p.unsqueeze(0)) / 2  # n, n, k
-    # TODO
-    return
+def pairwise_js_div(org, logit=True, reduction=None):
+    n = org.shape[0]
+    idx = torch.combinations(torch.arange(n))
 
+    p, q = org[idx[:, 0]], org[idx[:, 1]]
+    out = jensen_shannon_divergence(p, q, logit=logit)
 
-def pairwise_js_div(p):
-    n = p.shape[0]
-    res = torch.zeros(n, n)
-    for i in range(n):
-        for j in range(n):
-            res[i, j] = jensen_shannon_divergence(p[i], p[j])
-
-    return res
+    if reduction == "arithmetic":
+        return out.mean()
+    elif reduction == "geometric":
+        return out.log().mean().exp()
+    elif reduction == None:
+        return out
+    return out
 
 
 def mutual_information(

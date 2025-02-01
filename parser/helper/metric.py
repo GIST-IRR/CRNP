@@ -368,7 +368,7 @@ class LikelihoodMetric(Metric):
 
     def __call__(self, likelihood, lens):
         self.total += likelihood.shape[0]
-        self.total_likelihood += likelihood.detach_().sum()
+        self.total_likelihood += likelihood.detach().sum()
         # Follow Yoon Kim
         self.total_word += lens.sum() + lens.shape[0]
 
@@ -379,6 +379,10 @@ class LikelihoodMetric(Metric):
     @property
     def perplexity(self):
         return (-self.total_likelihood / self.total_word).exp()
+
+    @property
+    def avg_token(self):
+        return self.total_word / self.total
 
     def __repr__(self):
         return "avg likelihood: {}, perp. :{}".format(

@@ -47,7 +47,7 @@ class SplitPFTNPCFG(PFTNPCFG):
             lens=input["seq_len"],
             tree=tree_mask,
         )
-        return -result["partition"].mean()
+        return -result["partition"]
 
     def evaluate(
         self,

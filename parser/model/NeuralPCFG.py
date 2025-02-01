@@ -1,5 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
+from torch.distributions.categorical import Categorical
 from nltk import Tree
 from nltk.grammar import Nonterminal
 
@@ -10,6 +13,8 @@ from .PCFG_module import (
     Nonterm_parameterizer,
     UnaryRule_parameterizer,
 )
+
+from torch_support import metric
 
 
 class NeuralPCFG(PCFG_module):
@@ -150,6 +155,26 @@ class NeuralPCFG(PCFG_module):
                 lens=input["seq_len"],
                 dropout=self.dropout,
             )
+
+        # unary_global = Categorical(
+        #     logits=self.rules["unary"].logsumexp(0) - math.log(self.T)
+        # )
+        # unary_global_entropy = unary_global.entropy()
+        # unary_jsd = metric.pairwise_js_div(self.rules["unary"])
+        # unary_jsd = metric.geometric_mean(unary_jsd)
+
+        # binary_global = Categorical(
+        #     logits=self.rules["rule"].flatten(1).logsumexp(0)
+        #     - math.log(self.NT)
+        # )
+        # binary_global_entropy = binary_global.entropy()
+
+        # binary_jsd = metric.pairwise_js_div(self.rules["rule"].flatten(1))
+        # # binary_jsd = binary_jsd.log().mean().exp()
+        # binary_jsd = metric.geometric_mean(binary_jsd)
+
+        # ent = unary_global_entropy + binary_global_entropy
+        # jsd = unary_jsd + binary_jsd
 
         return -result["partition"]
 

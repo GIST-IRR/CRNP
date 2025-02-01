@@ -168,7 +168,7 @@ class CompoundPCFG(NeuralPCFG):
             soft=soft,
             reduction=None,
         )
-        return (res + self.rules["kl"]).mean()
+        return res + self.rules["kl"]
 
     def evaluate(self, input, decode_type, depth=0, label=False, **kwargs):
         rules = self.forward(input, evaluating=True)

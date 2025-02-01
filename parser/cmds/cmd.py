@@ -61,20 +61,38 @@ class CMD(object):
         if not (iter != start and iter % step == 0):
             return
 
-        # Log training loss
-        self.writer.add_scalar("train/loss", self.total_loss / step, iter)
+        # Log training average likelihood
+        self.writer.add_scalar(
+            "train/avg_likelihood", self.train_ll.avg_likelihood, iter
+        )
+        # Log training perlexity
+        self.writer.add_scalar(
+            "train/perplexity", self.train_ll.perplexity, iter
+        )
+        self.writer.add_scalar(
+            "train/avg_token", self.train_ll.avg_token, iter
+        )
+        self.run.log(
+            {
+                "train/step": iter,
+                "train/avg_likelihood": self.train_ll.avg_likelihood,
+                "train/perplexity": self.train_ll.perplexity,
+                "train/avg_token": self.train_ll.avg_token,
+            }
+        )
+        self.train_ll = LikelihoodMetric()
         # Log lambda for warm up
-        self.writer.add_scalar("train/lambda", self.dambda, iter)
+        # self.writer.add_scalar("train/lambda", self.dambda, iter)
 
-        metrics = self.total_metrics
-        for k, v in metrics.items():
-            self.writer.add_scalar(f"train/{k}", metrics[k] / step, iter)
+        # metrics = self.total_metrics
+        # for k, v in metrics.items():
+        #     self.writer.add_scalar(f"train/{k}", metrics[k] / step, iter)
 
         # initialize metrics
-        self.total_loss = 0
-        self.total_len = 0
-        for k in metrics.keys():
-            metrics[k] = 0
+        # self.total_loss = 0
+        # self.total_len = 0
+        # for k in metrics.keys():
+        #     metrics[k] = 0
 
         if hasattr(self.model, "pf"):
             self.writer.add_histogram(
@@ -89,6 +107,9 @@ class CMD(object):
     def train(self, loader):
         self.model.train()
         train_arg = self.args.train
+
+        # Initialize total loss and metrics
+        self.train_ll = LikelihoodMetric()
 
         # Make directory for saving heatmaps
         heatmap_dir = Path(self.args.save_dir) / "heatmap"
@@ -144,8 +165,11 @@ class CMD(object):
                     gold_tree=gold_tree,
                     pos=y["pos"],
                 )
+                # Log before reduction
+                self.train_ll(-loss, x["seq_len"])
+                # Reduction
                 loss = loss.mean()
-
+                # Backward
                 loss.backward()
 
             # Gradient clipping
@@ -158,13 +182,11 @@ class CMD(object):
             self.optimizer.step()
 
             # writer
-            self.total_loss += loss.item()
-            self.total_len += x["seq_len"].max().double()
 
-            for k in self.total_metrics.keys():
-                if not k in self.total_metrics:
-                    self.total_metrics[k] = 0
-                self.total_metrics[k] += self.model.metrics[k].mean().item()
+            # for k in self.total_metrics.keys():
+            #     if not k in self.total_metrics:
+            #         self.total_metrics[k] = 0
+            #     self.total_metrics[k] += self.model.metrics[k].mean().item()
 
             if hasattr(self.model, "pf"):
                 self.pf = (
@@ -187,6 +209,11 @@ class CMD(object):
                         filename=f"rule_dist_{self.iter}.png",
                         batched=batched,
                     )
+            # Update postfix
+            t.set_postfix(
+                nll=f"{self.train_ll.avg_likelihood.item():.3f}",
+                ppl=f"{self.train_ll.perplexity.item():.3f}",
+            )
             self.log_step(self.iter, start=0, step=1000)
 
             # Check total iteration
@@ -215,8 +242,7 @@ class CMD(object):
         metric_uas = UAS()
         metric_ll = LikelihoodMetric()
 
-        print("decoding mode:{}".format(decode_type))
-        print("evaluate_dep:{}".format(eval_dep))
+        print(f"decoding mode:{decode_type}\tevaluate_dep:{eval_dep}")
         t = tqdm(
             loader,
             total=int(len(loader)),

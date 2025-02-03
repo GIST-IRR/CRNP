@@ -45,7 +45,7 @@ class UnaryRule_parameterizer(nn.Module):
         self.n_child = n_child
 
         self.scale = scale
-        self.softmax = softmax
+        # self.softmax = softmax
         self.mlp_mode = mlp_mode
         self.temp = temp
 
@@ -66,9 +66,6 @@ class UnaryRule_parameterizer(nn.Module):
             residual = ResLayer
         elif residual == "bilinear":
             residual = Bilinear_ResLayer
-
-        if orthogonal:
-            self.orth = _Orthogonal()
 
         if mlp_mode == "standard":
             self.rule_mlp = nn.Sequential(
@@ -126,14 +123,17 @@ class UnaryRule_parameterizer(nn.Module):
         if self.mlp_mode != "cosine similarity" and child is not None:
             self.rule_mlp[-1].weight = child
 
-    def forward(self):
+    def forward(self, parent_emb=None, softmax="log_softmax"):
+        if parent_emb is None:
+            parent_emb = self.parent_emb
+
         if self.mlp_mode == "cosine similarity":
             rule_prob = self.rule_mlp(
-                self.parent_emb.unsqueeze(1), self.child_emb.unsqueeze(0)
+                parent_emb.unsqueeze(1), self.child_emb.unsqueeze(0)
             )
             rule_prob = rule_prob * self.temp
         else:
-            rule_prob = self.rule_mlp(self.parent_emb)
+            rule_prob = self.rule_mlp(parent_emb)
 
         if self.norm is not None:
             rule_prob = self.norm(rule_prob)
@@ -142,8 +142,11 @@ class UnaryRule_parameterizer(nn.Module):
         if self.scale:
             rule_prob = rule_prob / np.sqrt(rule_prob.size(-1))
 
-        if self.softmax:
+        if softmax == "log_softmax":
             rule_prob = rule_prob.log_softmax(-1)
+        elif softmax == "softmax":
+            rule_prob = rule_prob.softmax(-1)
+
         return rule_prob
 
 
@@ -178,7 +181,7 @@ class Nonterm_parameterizer(nn.Module):
         self.NT_T = self.NT + self.T
 
         self.scale = scale
-        self.softmax = softmax
+        # self.softmax = softmax
 
         self.temperature = temperature
 
@@ -279,34 +282,34 @@ class Nonterm_parameterizer(nn.Module):
         # children_emb = self.children_compose(children_emb)
         return children_emb
 
-    def forward(self, reshape=False):
-        if self.mlp_mode == "cosine similarity":
-            nonterm_emb = self.nonterm_emb
+    def forward(self, parent_emb=None, softmax="log_softmax", reshape=False):
+        if parent_emb is None:
+            parent_emb = self.nonterm_emb
+
+        def setup_emb():
+            nonterm_emb = parent_emb
             children_emb = self.get_children_emb()
             if self.compose_fn == "compose":
                 children_emb = self.children_compose(children_emb)
             elif self.compose_fn == "expose":
                 nonterm_emb = self.parent_expose(nonterm_emb)
+            return nonterm_emb, children_emb
 
+        if self.mlp_mode == "cosine similarity":
+            nonterm_emb, children_emb = setup_emb()
             nonterm_prob = self.rule_mlp(
-                self.nonterm_emb[:, None, None, ...],
+                nonterm_emb[:, None, None, ...],
                 children_emb[None, ...],
             )
             nonterm_prob = nonterm_prob * self.temp
             nonterm_prob = nonterm_prob.reshape(-1, self.NT_T**2)
         else:
             if self.shared_nonterm and self.shared_term:
-                nonterm_emb = self.nonterm_emb
-                children_emb = self.get_children_emb()
-                if self.compose_fn == "compose":
-                    children_emb = self.children_compose(children_emb)
-                elif self.compose_fn == "expose":
-                    nonterm_emb = self.parent_expose(nonterm_emb)
-
+                nonterm_emb, children_emb = setup_emb()
                 children_emb = children_emb.reshape(self.NT_T**2, -1)
                 nonterm_prob = nonterm_emb @ children_emb.T
             else:
-                nonterm_prob = self.rule_mlp(self.nonterm_emb)
+                nonterm_prob = self.rule_mlp(parent_emb)
 
         if self.norm is not None:
             nonterm_prob = self.norm(nonterm_prob)
@@ -315,9 +318,12 @@ class Nonterm_parameterizer(nn.Module):
         if self.scale:
             nonterm_prob = nonterm_prob / np.sqrt(nonterm_prob.size(-1))
 
-        if self.softmax:
+        if softmax == "log_softmax":
             nonterm_prob = nonterm_prob / self.temperature
             nonterm_prob = nonterm_prob.log_softmax(-1)
+        elif softmax == "softmax":
+            nonterm_prob = nonterm_prob / self.temperature
+            nonterm_prob = nonterm_prob.softmax(-1)
 
         if reshape:
             nonterm_prob = nonterm_prob.reshape(self.NT, self.NT_T, self.NT_T)

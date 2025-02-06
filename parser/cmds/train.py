@@ -63,18 +63,6 @@ class Train(CMD):
     def log_per_epoch(
         self, dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
     ):
-        ## Visualization
-        # heatmap_dir = Path(self.args.save_dir) / "heatmap"
-        # for k in self.total_metrics.keys():
-        #     mp.Process(
-        #         target=tensor_to_heatmap,
-        #         args=(self.model.metrics[k],),
-        #         kwargs={
-        #             "dirname": heatmap_dir,
-        #             "filename": f"{k}_{self.iter}.png",
-        #         },
-        #     )
-
         # F1 score for each epoch
         tag = "valid"
 
@@ -92,7 +80,7 @@ class Train(CMD):
                 self.model.rules["unary"]
             ),
             "valid/unary_jsd_arithmetic": unary_jsd.mean(),
-            "valid/unary_jsd_geometric": unary_jsd.log().mean().exp(),
+            "valid/unary_jsd_geometric": metric.geometric_mean(unary_jsd),
         }
 
         try:
@@ -108,9 +96,9 @@ class Train(CMD):
                         self.model.rules["rule"].flatten(1)
                     ),
                     "valid/binary_jsd_arithmetic": binary_jsd.mean(),
-                    "valid/binary_jsd_geometric": binary_jsd.log()
-                    .mean()
-                    .exp(),
+                    "valid/binary_jsd_geometric": metric.geometric_mean(
+                        binary_jsd
+                    ),
                 }
             )
         except:
@@ -128,7 +116,9 @@ class Train(CMD):
                         self.model.rules["head"]
                     ),
                     "valid/head_jsd_arithmetic": head_jsd.mean(),
-                    "valid/head_jsd_geometric": head_jsd.log().mean().exp(),
+                    "valid/head_jsd_geometric": metric.geometric_mean(
+                        head_jsd
+                    ),
                     "valid/left_local_ppl": metric.local_ppl(
                         self.model.rules["left"].T
                     ),
@@ -136,7 +126,9 @@ class Train(CMD):
                         self.model.rules["left"].T
                     ),
                     "valid/left_jsd_arithmetic": left_jsd.mean(),
-                    "valid/left_jsd_geometric": left_jsd.log().mean().exp(),
+                    "valid/left_jsd_geometric": metric.geometric_mean(
+                        left_jsd
+                    ),
                     "valid/right_local_ppl": metric.local_ppl(
                         self.model.rules["right"].T
                     ),
@@ -144,7 +136,9 @@ class Train(CMD):
                         self.model.rules["right"].T
                     ),
                     "valid/right_jsd_arithmetic": right_jsd.mean(),
-                    "valid/right_jsd_geometric": right_jsd.log().mean().exp(),
+                    "valid/right_jsd_geometric": metric.geometric_mean(
+                        right_jsd
+                    ),
                 }
             )
         except:

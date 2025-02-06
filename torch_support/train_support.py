@@ -9,8 +9,6 @@ from distutils.dir_util import copy_tree
 import traceback
 import logging
 
-from numpy import r_
-import wand
 from yaml import load, dump
 
 try:

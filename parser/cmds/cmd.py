@@ -138,6 +138,10 @@ class CMD(object):
             else:
                 gold_tree = None
 
+            # Set forward hook
+            if self.iter % 1000 == 0:
+                self.model.set_forward_hooks(self.run, self.iter, once=True)
+
             # Gradient zero
             self.optimizer.zero_grad()
 
@@ -145,12 +149,12 @@ class CMD(object):
                 self.dambda = self.lambda_update(train_arg)
                 # Soft gradients
                 if self.dambda > 0:
-                    loss, z_l = self.model.loss(
+                    loss, z_l = self.model(
                         x, partition=self.partition, soft=True
                     )
                     t_loss = (loss + z_l).mean()
                 else:
-                    loss = self.model.loss(x, temp=self.temp)
+                    loss = self.model(x, temp=self.temp)
                     z_l = None
                     t_loss = loss.mean()
 
@@ -159,7 +163,7 @@ class CMD(object):
                 loss = z_l.mean() if z_l is not None else loss.mean()
 
             else:
-                loss = self.model.loss(
+                loss = self.model(
                     x,
                     partition=self.partition,
                     gold_tree=gold_tree,

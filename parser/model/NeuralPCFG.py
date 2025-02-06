@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.distributions.categorical import Categorical
 from nltk import Tree
 from nltk.grammar import Nonterminal
+import wandb
 
 from parser.pfs.partition_function import PartitionFunction
 from ..pcfgs.pcfg import PCFG
@@ -42,6 +43,38 @@ class NeuralPCFG(PCFG_module):
         # Partition function
         self.mode = getattr(args, "mode", "length_unary")
 
+    def set_forward_hooks(self, logger, current_step, once=True):
+        if not hasattr(self, "forward_hooks_handles"):
+            self.forward_hooks_handles = []
+        for name, module in self.named_modules():
+            # ignore modules
+            if name in ["", "pcfg", "part"]:
+                continue
+
+            # Add name attribute to module
+            module.name = name
+
+            def activation_hook(module, input, output):
+                k = f"activations/{module.name}"
+                logger.log(
+                    {
+                        k: wandb.Histogram(output.detach().clone().cpu()),
+                        "train/step": current_step,
+                    },
+                )
+                if once:
+                    module.forward_handle.remove()
+
+            handle = module.register_forward_hook(activation_hook)
+            module.forward_handle = handle
+            self.forward_hooks_handles.append(handle)
+
+    def drop_forward_hooks(self):
+        if hasattr(self, "forward_hooks_handles"):
+            return
+        for handle in self.forward_hooks_handles:
+            handle.remove()
+
     def _embedding_sharing(self):
         if self.embedding_sharing:
             print("embedding sharing")
@@ -59,7 +92,7 @@ class NeuralPCFG(PCFG_module):
             self.T,
             self.V,
             parent_emb=self.term_emb,
-            **self.cfgs.unary
+            **self.cfgs.unary,
         )
         self.nonterms = Nonterm_parameterizer(
             self.s_dim,
@@ -67,7 +100,7 @@ class NeuralPCFG(PCFG_module):
             self.T,
             nonterm_emb=self.nonterm_emb,
             term_emb=self.term_emb,
-            **self.cfgs.binary
+            **self.cfgs.binary,
         )
         # root
         self.root = UnaryRule_parameterizer(
@@ -75,7 +108,7 @@ class NeuralPCFG(PCFG_module):
             1,
             self.NT,
             child_emb=self.nonterm_emb,
-            **self.cfgs.root
+            **self.cfgs.root,
         )
 
     def entropy(self, key, batch=False, probs=False, reduce="none"):
@@ -96,7 +129,7 @@ class NeuralPCFG(PCFG_module):
             ent_prob = torch.cat([r_ent, n_ent, t_ent]).mean()
         return ent_prob
 
-    def forward(self, input=None):
+    def get_grammar(self, input=None):
         # Root
         root = self.root()
         # Rule
@@ -135,11 +168,11 @@ class NeuralPCFG(PCFG_module):
             ],
         }
 
-    def loss(self, input, partition=False, soft=False, **kwargs):
+    def forward(self, input, partition=False, soft=False, **kwargs):
         words = input["word"]
 
         # Calculate rule distributions
-        self.rules = self.forward(input)
+        self.rules = self.get_grammar(input)
         rules = self.batchify(self.rules, words)
         rules["word"] = input["word"]
 
@@ -188,7 +221,7 @@ class NeuralPCFG(PCFG_module):
                 need_update = True
 
         if need_update:
-            self.rules = self.forward()
+            self.rules = self.get_grammar()
 
     def decode(self, rules, lens, decode_type, label=False):
         if decode_type == "viterbi":
@@ -217,7 +250,7 @@ class NeuralPCFG(PCFG_module):
         decode_type="mbr",
         label=False,
         rule_update=False,
-        **kwargs
+        **kwargs,
     ):
         self.check_rule_update(rule_update)
         rules = self.batchify(self.rules, input["word"])

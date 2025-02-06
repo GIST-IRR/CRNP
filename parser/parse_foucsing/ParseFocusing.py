@@ -85,7 +85,7 @@ class ParseFocusing:
 
         return tree_mask
 
-    def loss(
+    def forward(
         self,
         input,
         partition=False,
@@ -101,7 +101,7 @@ class ParseFocusing:
         else:
             tree_mask = None
 
-        self.rules = self.forward(input)
+        self.rules = self.get_grammar(input)
         rules = self.batchify(self.rules, words)
         self.rules["word"] = input["word"]
 

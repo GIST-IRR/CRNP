@@ -18,7 +18,7 @@ class FixedMFTNPCFG(PFTNPCFG):
 
         self.register_buffer("term_prob", pretrained_term)
 
-    def forward(self, **kwargs):
+    def get_grammar(self, **kwargs):
         root = self.root()
         unary = self.term_prob
         head, left, right = self.nonterms()

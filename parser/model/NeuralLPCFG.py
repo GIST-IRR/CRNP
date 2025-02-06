@@ -69,7 +69,7 @@ class NeuralLPCFG(nn.Module):
     def update_depth(self, depth):
         self.depth = depth
 
-    def forward(self, input, eval_dep=False, **kwargs):
+    def get_grammar(self, input, eval_dep=False, **kwargs):
         x = input["word"]
         b, n = x.shape[:2]
 
@@ -176,8 +176,8 @@ class NeuralLPCFG(nn.Module):
                 "kl": torch.tensor(0),
             }
 
-    def loss(self, input):
-        rules = self.forward(input)
+    def forward(self, input):
+        rules = self.get_grammar(input)
         result = self.pcfg.loss(rules, input["seq_len"])
         # Partition function
         if self.depth > 0:
@@ -190,16 +190,16 @@ class NeuralLPCFG(nn.Module):
 
     def evaluate(self, input, decode_type="mbr", eval_dep=False):
         if decode_type == "mbr":
-            rules = self.forward(input)
+            rules = self.get_grammar(input)
             result = self.pcfg.decode(
                 rules, input["seq_len"], mbr=True, eval_dep=eval_dep
             )
         else:
-            rules = self.forward(input, eval_dep=True)
+            rules = self.get_grammar(input, eval_dep=True)
             result = EisnerSatta.viterbi_decoding(
                 rule=rules["rule"], root=rules["root"], lens=input["seq_len"]
             )
-            rules = self.forward(input)
+            rules = self.get_grammar(input)
             logZ = self.pcfg.loss(rules, input["seq_len"])
             result.update(logZ)
 

@@ -108,7 +108,7 @@ class CompoundPCFG(NeuralPCFG):
 
         self.enc = Encoder(self.V, self.w_dim, self.h_dim, self.z_dim)
 
-    def forward(self, input, evaluating=False):
+    def get_grammar(self, input, evaluating=False):
         x = input["word"]
         b, n = x.shape[:2]
         seq_len = input["seq_len"]
@@ -146,7 +146,6 @@ class CompoundPCFG(NeuralPCFG):
         }
 
     def batchify(self, rules, words):
-
         b, n = words.shape[:2]
         unary = rules["unary"]
         unary = unary.gather(
@@ -160,8 +159,10 @@ class CompoundPCFG(NeuralPCFG):
             "kl": rules["kl"],
         }
 
-    def loss(self, input, partition=False, max_depth=0, soft=False, **kwargs):
-        res = super().loss(
+    def forward(
+        self, input, partition=False, max_depth=0, soft=False, **kwargs
+    ):
+        res = super().forward(
             input,
             partition=partition,
             max_depth=max_depth,
@@ -171,7 +172,7 @@ class CompoundPCFG(NeuralPCFG):
         return res + self.rules["kl"]
 
     def evaluate(self, input, decode_type, depth=0, label=False, **kwargs):
-        rules = self.forward(input, evaluating=True)
+        rules = self.get_grammar(input, evaluating=True)
         rules = self.batchify(rules, input["word"])
         result = self.decode(rules, input["seq_len"], decode_type, label)
 

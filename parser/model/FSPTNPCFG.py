@@ -12,8 +12,10 @@ class FSPTNPCFG(ParseFocusing, FNPCFG):
         self._setup_parse_focusing(args)
         self.sim = nn.CosineSimilarity(dim=-1)
 
-    def loss(self, input, partition=False, soft=False, label=False, **kwargs):
-        loss = super().loss(
+    def forward(
+        self, input, partition=False, soft=False, label=False, **kwargs
+    ):
+        loss = super().forward(
             input, partition=partition, soft=soft, label=label, **kwargs
         )
         nt_sim = self.sim(

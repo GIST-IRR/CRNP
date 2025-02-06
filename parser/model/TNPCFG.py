@@ -260,7 +260,7 @@ class TNPCFG(NeuralPCFG):
 
         return {"unary": unary, "root": root, "rule": rule}
 
-    def forward(self, input=None, **kwargs):
+    def get_grammar(self, input=None, **kwargs):
         root = self.root()
         unary = self.terms()
         head, left, right = self.nonterms()
@@ -316,9 +316,11 @@ class TNPCFG(NeuralPCFG):
                 "rule": rule,
             }
 
-    def loss(self, input, partition=False, soft=False, label=False, **kwargs):
+    def forward(
+        self, input, partition=False, soft=False, label=False, **kwargs
+    ):
         words = input["word"]
-        self.rules = self.forward()
+        self.rules = self.get_grammar()
         rules = self.batchify(self.rules, words)
 
         result = self.pcfg(rules, lens=input["seq_len"], label=label)

@@ -13,7 +13,7 @@ class FTNPCFG(TNPCFG):
         self.rank_proj = getattr(args, "rank_proj", True)
         self.init = getattr(args, "init", "xavier_normal")
 
-    def forward(self, input=None, **kwargs):
+    def get_grammar(self, input=None, **kwargs):
         root = self.root()
         unary = self.terms()
         head, left, right = self.nonterms(softmax="softmax")

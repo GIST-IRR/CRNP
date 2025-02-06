@@ -20,7 +20,7 @@ class RFNPCFG(FNPCFG):
         self.unary = nn.Parameter(unary)
         self.binary = nn.Parameter(binary)
 
-    def forward(self, input):
+    def get_grammar(self, input):
         return {
             "root": self.roots,
             "unary": self.unary,

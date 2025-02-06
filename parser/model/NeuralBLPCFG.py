@@ -73,7 +73,7 @@ class NeuralBLPCFG(nn.Module):
     def update_depth(self, depth):
         self.depth = depth
 
-    def forward(self, input):
+    def get_grammar(self, input):
         x = input["word"]
         b, n = x.shape[:2]
         x_emb = self.word_emb(x)
@@ -232,8 +232,8 @@ class NeuralBLPCFG(nn.Module):
 
         return {"root": roots(), "rule": rule(), "kl": 0}
 
-    def loss(self, input, partition=None):
-        rules = self.forward(input)
+    def forward(self, input, partition=None):
+        rules = self.get_grammar(input)
         result = self.pcfg.loss(rules, input["seq_len"])
         return -result["partition"].mean()
 
@@ -241,7 +241,7 @@ class NeuralBLPCFG(nn.Module):
         self, input, decode_type="mbr", eval_dep=False, depth=None, **kwargs
     ):
         if decode_type == "mbr":
-            rules = self.forward(input)
+            rules = self.get_grammar(input)
             return self.pcfg.decode(
                 rules, input["seq_len"], mbr=True, eval_dep=eval_dep
             )
@@ -250,7 +250,7 @@ class NeuralBLPCFG(nn.Module):
             result = EisnerSatta.viterbi_decoding(
                 rule=rules["rule"], root=rules["root"], lens=input["seq_len"]
             )
-            rules = self.forward(input)
+            rules = self.get_grammar(input)
             logZ = self.pcfg.loss(rules, input["seq_len"])
             result.update(logZ)
             return result

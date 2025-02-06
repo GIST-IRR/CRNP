@@ -32,11 +32,11 @@ class SplitPFTNPCFG(PFTNPCFG):
             n_words[unk_uidx] = torch.tensor(new_tok, device=words.device)
         return n_words
 
-    def loss(self, input, pos, **kwargs):
+    def forward(self, input, pos, **kwargs):
         words = input["word"]
         n_words = self.split_unknown(words, pos)
 
-        self.rules = self.forward()
+        self.rules = self.get_grammar()
         self.rules = self.batchify(self.rules, n_words)
 
         tree_mask = self.get_pretrained_tree_mask(words)

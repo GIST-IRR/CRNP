@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dist
-from torch.nn.utils.parametrizations import _Orthogonal
+from torch.nn.utils.parametrizations import orthogonal, weight_norm
 
 from ..modules.res import ResLayer, Bilinear_ResLayer
 from ..modules.norm import MeanOnlyLayerNorm
@@ -25,18 +25,23 @@ class UnaryRule_parameterizer(nn.Module):
         h_dim=None,
         parent_emb=None,
         child_emb=None,
-        orthogonal=False,
         activation="relu",
         mlp_mode="standard",
         num_res_blocks=2,
         scale=False,
-        softmax=True,
         norm=None,
         last_norm=None,
+        first_layer_norm=False,
+        last_layer_norm=False,
+        first_weight_norm=False,
+        last_weight_norm=False,
         temp=1,
         last_layer_bias=True,
         elementwise_affine=True,
         residual="standard",
+        res_version=1,
+        res_add_first=False,
+        res_norm_first=False,
     ):
         super().__init__()
         self.dim = dim
@@ -68,24 +73,52 @@ class UnaryRule_parameterizer(nn.Module):
             residual = Bilinear_ResLayer
 
         if mlp_mode == "standard":
-            self.rule_mlp = nn.Sequential(
-                nn.Linear(self.dim, self.h_dim),
-                *[
+            self.rule_mlp = nn.Sequential()
+            # First layer
+            fl = nn.Linear(self.dim, self.h_dim)
+            if first_weight_norm:
+                fl = weight_norm(fl)
+            self.rule_mlp.append(fl)
+            # Layer Norm
+            if first_layer_norm:
+                self.rule_mlp.append(
+                    nn.LayerNorm(
+                        self.h_dim, elementwise_affine=elementwise_affine
+                    )
+                )
+                self.rule_mlp.append(nn.LeakyReLU())
+            # Residual Blocks
+            for _ in range(num_res_blocks):
+                self.rule_mlp.append(
                     residual(
                         self.h_dim,
                         self.h_dim,
                         activation=activation,
                         norm=norm,
                         elementwise_affine=elementwise_affine,
+                        add_first=res_add_first,
+                        norm_first=res_norm_first,
+                        version=res_version,
                     )
-                    for _ in range(num_res_blocks)
-                ],
-                nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias),
-            )
+                )
+            # Last Layer Norm
+            if last_layer_norm:
+                self.rule_mlp.append(
+                    nn.LayerNorm(
+                        self.h_dim, elementwise_affine=elementwise_affine
+                    )
+                )
+                # self.rule_mlp.append(nn.LeakyReLU())
+            # Last Layer
+            ll = nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias)
+            if last_weight_norm:
+                ll = weight_norm(ll)
+            self.rule_mlp.append(ll)
         elif mlp_mode == "single":
-            self.rule_mlp = nn.Linear(
-                self.dim, self.n_child, bias=last_layer_bias
-            )
+            l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
+            if first_weight_norm:
+                l = weight_norm(l)
+            self.rule_mlp = l
         elif mlp_mode == "cosine similarity":
             self.rule_mlp = nn.CosineSimilarity(dim=-1)
             if not self.shared_child:
@@ -230,6 +263,9 @@ class Nonterm_parameterizer(nn.Module):
                 )
                 self.register_parameter("children_compose", None)
         elif mlp_mode == "single":
+            # self.rule_mlp = nn.Sequential(
+            #     weight_norm(nn.Linear(self.dim, self.NT_T**2))
+            # )
             self.rule_mlp = nn.Sequential(nn.Linear(self.dim, self.NT_T**2))
         elif mlp_mode == "cosine similarity":
             self.rule_mlp = nn.CosineSimilarity(dim=-1)

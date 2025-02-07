@@ -38,13 +38,19 @@ class ResLayer(nn.Module):
         norm=None,
         elementwise_affine=True,
         add_first=False,
+        norm_first=False,
+        version=1,
     ):
         super(ResLayer, self).__init__()
         self.activation = activation
         self.add_first = add_first
+        self.norm_first = norm_first
+        self.version = version
 
         if activation == "relu":
             activation = nn.ReLU
+        elif activation == "leaky-relu":
+            activation = nn.LeakyReLU
         elif activation == "tanh":
             activation = nn.Tanh
         elif activation == "sine":
@@ -61,31 +67,52 @@ class ResLayer(nn.Module):
         elif norm == "batch":
             norm = nn.BatchNorm1d
 
-        if norm is None:
+        if version == 1:
+            if norm is None:
+                self.linear = nn.Sequential(
+                    nn.Linear(in_dim, out_dim),
+                    activation(),
+                    nn.Linear(out_dim, out_dim),
+                )
+                self.register_module("norm", None)
+            else:
+                self.linear = nn.Sequential(
+                    nn.Linear(in_dim, out_dim),
+                    norm(out_dim, elementwise_affine=elementwise_affine),
+                    activation(),
+                    nn.Linear(out_dim, out_dim),
+                    # norm(out_dim, elementwise_affine=elementwise_affine),
+                )
+                self.norm = norm(
+                    out_dim, elementwise_affine=elementwise_affine
+                )
+            self.last_activation = activation()
+        elif version == 2:
             self.linear = nn.Sequential(
-                nn.Linear(in_dim, out_dim),
+                norm(in_dim, elementwise_affine=elementwise_affine),
                 activation(),
-                nn.Linear(out_dim, out_dim),
-                # activation(),
-            )
-        else:
-            self.linear = nn.Sequential(
                 nn.Linear(in_dim, out_dim),
                 norm(out_dim, elementwise_affine=elementwise_affine),
                 activation(),
                 nn.Linear(out_dim, out_dim),
-                norm(out_dim, elementwise_affine=elementwise_affine),
-                # activation(),
             )
-        self.last_activation = activation()
+            self.register_module("last_activation", None)
 
     def forward(self, x):
-        # if self.activation == "sine":
-        #     x = torch.sin(x)
-        if self.add_first:
-            return self.last_activation(self.linear(x) + x)
-        else:
-            return x + self.last_activation(self.linear(x))
+        if self.version == 1:
+            if self.add_first:
+                if self.norm:
+                    if self.norm_first:
+                        x = x + self.norm(self.linear(x))
+                    else:
+                        x = self.norm(self.linear(x) + x)
+                else:
+                    x = x + self.linear(x)
+                return self.last_activation(x)
+            else:
+                return x + self.last_activation(self.linear(x))
+        elif self.version == 2:
+            return x + self.linear(x)
 
 
 class Bilinear_ResLayer(nn.Module):

@@ -14,7 +14,13 @@ import random
 
 class DataModule:
     def __init__(
-        self, hparams, generator=None, worker_init_fn=None, mask="<mask>"
+        self,
+        hparams,
+        generator=None,
+        worker_init_fn=None,
+        padding="<pad>",
+        unknown="<unk>",
+        mask="<mask>",
     ):
         super().__init__()
 
@@ -22,6 +28,8 @@ class DataModule:
         self.device = self.hparams.device
         self.generator = generator
         self.worker_init_fn = worker_init_fn
+        self.padding = padding
+        self.unknown = unknown
         self.mask = mask
         self.setup()
 
@@ -33,7 +41,12 @@ class DataModule:
         train_dataset = DataSet()
         val_dataset = DataSet()
         test_dataset = DataSet()
-        word_vocab = Vocabulary(max_size=data.vocab_size, mask=self.mask)
+        word_vocab = Vocabulary(
+            max_size=data.vocab_size,
+            padding=self.padding,
+            unknown=self.unknown,
+            mask=self.mask,
+        )
         train_data = pickle.load(open(data.train_file, "rb"))
         val_data = pickle.load(open(data.val_file, "rb"))
         test_data = pickle.load(open(data.test_file, "rb"))

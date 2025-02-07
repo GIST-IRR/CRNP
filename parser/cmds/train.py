@@ -30,8 +30,9 @@ from parser.cmds.log import log_weight_histogram, log_rule_prob
 
 
 class Train(CMD):
-    def setup_logger(self, args):
+    def setup_logger(self):
         # Setup logger
+        args = self.args
         console_level = args.get("console_level", "INFO")
         self.log = get_logger(args, console_level=console_level)
         self.log.info(f"Seed: {args.seed}")
@@ -40,20 +41,22 @@ class Train(CMD):
         self.log.info(self.optimizer)
 
         # Setup tensorboard writer
-        self.writer = SummaryWriter(args.save_dir)
+        if getattr(args, "tensorboard", False):
+            self.writer = SummaryWriter(args.save_dir)
 
         # Setup WandB
         # start a new wandb run to track this script
-        self.run = wandb.init(
-            # set the wandb project where this run will be logged
-            project="neural-grammar-induction",
-            # track hyperparameters and run metadata
-            config=args,
-        )
-        wandb.define_metric("train/step")
-        wandb.define_metric("valid/epoch")
-        wandb.define_metric("train/*", step_metric="train/step")
-        wandb.define_metric("valid/*", step_metric="valid/epoch")
+        if getattr(args, "wandb", False):
+            self.run = wandb.init(
+                # set the wandb project where this run will be logged
+                project="neural-grammar-induction",
+                # track hyperparameters and run metadata
+                config=args,
+            )
+            wandb.define_metric("train/step")
+            wandb.define_metric("valid/epoch")
+            wandb.define_metric("train/*", step_metric="train/step")
+            wandb.define_metric("valid/*", step_metric="valid/epoch")
 
     def log_per_step(
         self, dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
@@ -68,149 +71,126 @@ class Train(CMD):
 
         unary_jsd = metric.pairwise_js_div(self.model.rules["unary"])
         metric_list = {
-            "valid/epoch": self.epoch,
-            "valid/avg_likelihood": dev_ll.score,
-            "valid/perplexity": dev_ll.perplexity,
-            "valid/f1": dev_f1_metric.sentence_uf1,
-            "valid/exact": dev_f1_metric.sentence_ex,
-            "valid/unary_local_ppl": metric.local_ppl(
+            f"{tag}/epoch": self.epoch,
+            f"{tag}/avg_likelihood": dev_ll.score,
+            f"{tag}/perplexity": dev_ll.perplexity,
+            f"{tag}/f1": dev_f1_metric.sentence_uf1,
+            f"{tag}/exact": dev_f1_metric.sentence_ex,
+            f"{tag}/unary_local_ppl": metric.local_ppl(
                 self.model.rules["unary"]
             ),
-            "valid/unary_global_ppl": metric.global_ppl(
+            f"{tag}/unary_global_ppl": metric.global_ppl(
                 self.model.rules["unary"]
             ),
-            "valid/unary_jsd_arithmetic": unary_jsd.mean(),
-            "valid/unary_jsd_geometric": metric.geometric_mean(unary_jsd),
+            f"{tag}/unary_jsd_arithmetic": unary_jsd.mean(),
+            f"{tag}/unary_jsd_geometric": metric.geometric_mean(unary_jsd),
         }
 
-        try:
+        if "rule" in self.model.rules:
             binary_jsd = metric.pairwise_js_div(
                 self.model.rules["rule"].flatten(1)
             )
             metric_list.update(
                 {
-                    "valid/binary_local_ppl": metric.local_ppl(
+                    f"{tag}/binary_local_ppl": metric.local_ppl(
                         self.model.rules["rule"].flatten(1)
                     ),
-                    "valid/binary_global_ppl": metric.global_ppl(
+                    f"{tag}/binary_global_ppl": metric.global_ppl(
                         self.model.rules["rule"].flatten(1)
                     ),
-                    "valid/binary_jsd_arithmetic": binary_jsd.mean(),
-                    "valid/binary_jsd_geometric": metric.geometric_mean(
+                    f"{tag}/binary_jsd_arithmetic": binary_jsd.mean(),
+                    f"{tag}/binary_jsd_geometric": metric.geometric_mean(
                         binary_jsd
                     ),
                 }
             )
-        except:
-            pass
-        try:
+        elif "head" in self.model.rules:
             head_jsd = metric.pairwise_js_div(self.model.rules["head"])
             left_jsd = metric.pairwise_js_div(self.model.rules["left"].T)
             right_jsd = metric.pairwise_js_div(self.model.rules["right"].T)
             metric_list.update(
                 {
-                    "valid/head_local_ppl": metric.local_ppl(
+                    f"{tag}/head_local_ppl": metric.local_ppl(
                         self.model.rules["head"]
                     ),
-                    "valid/head_global_ppl": metric.global_ppl(
+                    f"{tag}/head_global_ppl": metric.global_ppl(
                         self.model.rules["head"]
                     ),
-                    "valid/head_jsd_arithmetic": head_jsd.mean(),
-                    "valid/head_jsd_geometric": metric.geometric_mean(
+                    f"{tag}/head_jsd_arithmetic": head_jsd.mean(),
+                    f"{tag}/head_jsd_geometric": metric.geometric_mean(
                         head_jsd
                     ),
-                    "valid/left_local_ppl": metric.local_ppl(
+                    f"{tag}/left_local_ppl": metric.local_ppl(
                         self.model.rules["left"].T
                     ),
-                    "valid/left_global_ppl": metric.global_ppl(
+                    f"{tag}/left_global_ppl": metric.global_ppl(
                         self.model.rules["left"].T
                     ),
-                    "valid/left_jsd_arithmetic": left_jsd.mean(),
-                    "valid/left_jsd_geometric": metric.geometric_mean(
+                    f"{tag}/left_jsd_arithmetic": left_jsd.mean(),
+                    f"{tag}/left_jsd_geometric": metric.geometric_mean(
                         left_jsd
                     ),
-                    "valid/right_local_ppl": metric.local_ppl(
+                    f"{tag}/right_local_ppl": metric.local_ppl(
                         self.model.rules["right"].T
                     ),
-                    "valid/right_global_ppl": metric.global_ppl(
+                    f"{tag}/right_global_ppl": metric.global_ppl(
                         self.model.rules["right"].T
                     ),
-                    "valid/right_jsd_arithmetic": right_jsd.mean(),
-                    "valid/right_jsd_geometric": metric.geometric_mean(
+                    f"{tag}/right_jsd_arithmetic": right_jsd.mean(),
+                    f"{tag}/right_jsd_geometric": metric.geometric_mean(
                         right_jsd
                     ),
                 }
             )
-        except:
-            pass
 
         if self.left_binarization:
             metric_list.update(
                 {
-                    "valid/f1_left": dev_left_metric.sentence_uf1,
-                    "valid/exact_left": dev_left_metric.sentence_ex,
+                    f"{tag}/f1_left": dev_left_metric.sentence_uf1,
+                    f"{tag}/exact_left": dev_left_metric.sentence_ex,
                 }
             )
         if self.right_binarization:
             metric_list.update(
                 {
-                    "valid/f1_right": dev_right_metric.sentence_uf1,
-                    "valid/exact_right": dev_right_metric.sentence_ex,
+                    f"{tag}/f1_right": dev_right_metric.sentence_uf1,
+                    f"{tag}/exact_right": dev_right_metric.sentence_ex,
                 }
             )
 
-        for k, v in metric_list.items():
-            self.writer.add_scalar(f"{tag}/{k}", v, self.epoch)
-        self.run.log(metric_list)
-
         metric_dict = {
-            "f1_length": dev_f1_metric.sentence_uf1_l,
-            "Ex_length": dev_f1_metric.sentence_ex_l,
-            "f1_left_length": dev_left_metric.sentence_uf1_l,
-            "Ex_left_length": dev_left_metric.sentence_ex_l,
-            "f1_right_length": dev_right_metric.sentence_uf1_l,
-            "Ex_right_length": dev_right_metric.sentence_ex_l,
-            # "f1_depth": dev_f1_metric.sentence_uf1_d,
-            # "Ex_depth": dev_f1_metric.sentence_ex_d,
-            # "f1_left_depth": dev_left_metric.sentence_uf1_d,
-            # "Ex_left_depth": dev_left_metric.sentence_ex_d,
-            # "f1_right_depth": dev_right_metric.sentence_uf1_d,
-            # "Ex_right_depth": dev_right_metric.sentence_ex_d,
+            f"{tag}/f1_length": dev_f1_metric.sentence_uf1_l,
+            f"{tag}/Ex_length": dev_f1_metric.sentence_ex_l,
+            f"{tag}/f1_left_length": dev_left_metric.sentence_uf1_l,
+            f"{tag}/Ex_left_length": dev_left_metric.sentence_ex_l,
+            f"{tag}/f1_right_length": dev_right_metric.sentence_uf1_l,
+            f"{tag}/Ex_right_length": dev_right_metric.sentence_ex_l,
         }
 
-        for k, v in metric_dict.items():
-            for i, val in v.items():
-                self.writer.add_scalar(f"{tag}/{k}", val, i)
+        if getattr(self.args, "tensorboard", False):
+            for k, v in metric_list.items():
+                self.writer.add_scalar(f"{tag}/{k}", v, self.epoch)
 
-        # distribution of estimated span depth
-        self.estimated_depth = dict(sorted(self.estimated_depth.items()))
-        for k, v in self.estimated_depth.items():
-            self.writer.add_scalar(
-                "valid/estimated_depth", v / dev_f1_metric.n, k
-            )
+            for k, v in metric_dict.items():
+                for i, val in v.items():
+                    self.writer.add_scalar(f"{tag}/{k}", val, i)
 
-        # Model weight norm
-        if getattr(self.args.train, "vector_histogram", False):
-            log_weight_histogram(self.writer, self.model, self.epoch)
-        # Rule probability distribution projection
-        if getattr(self.args.train, "rule_embeddings", False):
-            log_rule_prob(self.writer, self.model, self.epoch)
+            # distribution of estimated span depth
+            self.estimated_depth = dict(sorted(self.estimated_depth.items()))
+            for k, v in self.estimated_depth.items():
+                self.writer.add_scalar(
+                    f"{tag}/estimated_depth", v / dev_f1_metric.n, k
+                )
 
-        # Log parse tree
-        # tree_idx = torch.randint(0, len(self.parse_trees), 1).item()
-        tree_idx = 0
-        tree = self.parse_trees[tree_idx]
+            # Model weight norm
+            if getattr(self.args.train, "vector_histogram", False):
+                log_weight_histogram(self.writer, self.model, self.epoch)
+            # Rule probability distribution projection
+            if getattr(self.args.train, "rule_embeddings", False):
+                log_rule_prob(self.writer, self.model, self.epoch)
 
-        from nltk.tree.prettyprinter import TreePrettyPrinter
-
-        gold_tree = span_to_tree_with_sent(tree["gold_tree"], tree["sentence"])
-        pred_tree = span_to_tree_with_sent(tree["pred_tree"], tree["sentence"])
-        self.writer.add_text(
-            "gold_tree", TreePrettyPrinter(gold_tree).text(), self.epoch
-        )
-        self.writer.add_text(
-            "pred_tree", TreePrettyPrinter(pred_tree).text(), self.epoch
-        )
+        if getattr(self.args, "wandb", False):
+            self.run.log(metric_list)
 
     def setup_warmup(self, train_arg):
         train_arg.warmup_iter = int(
@@ -254,8 +234,11 @@ class Train(CMD):
         )
         with open(f"{args.save_dir}/word_vocab.pkl", "wb") as f:
             pickle.dump(dataset.word_vocab, f)
-        # Update vocab size
-        # Add three different unknown tokens
+        # Token setup
+        self.pad_token = dataset.word_vocab.word2idx["<pad>"]
+        self.unk_token = dataset.word_vocab.word2idx["<unk>"]
+        self.mask_token = dataset.word_vocab.word2idx.get("<mask>", None)
+        # Update vocab size & Add three different unknown tokens
         args.model.update({"V": len(dataset.word_vocab)})
 
         # Setup model
@@ -270,14 +253,10 @@ class Train(CMD):
         )
 
         # Setup logger
-        self.setup_logger(args)
+        self.setup_logger()
 
         total_time = timedelta()
         best_e, best_metric = 1, Metric()
-
-        # Setup Validation
-        eval_max_len = getattr(args.test, "max_len", None)
-        eval_loader = dataset.val_dataloader(max_len=eval_max_len)
 
         """
         Training
@@ -287,6 +266,9 @@ class Train(CMD):
         self.train_arg = train_arg
         self.test_arg = test_arg
 
+        # Setup Validation
+        eval_max_len = getattr(test_arg, "max_len", None)
+        eval_loader = dataset.val_dataloader(max_len=eval_max_len)
         # Arguments for validation
         eval_depth = getattr(test_arg, "eval_depth", False)
         self.left_binarization = getattr(test_arg, "left_binarization", False)
@@ -311,11 +293,6 @@ class Train(CMD):
         if getattr(train_arg, "dambda_warmup", False):
             train_arg = self.setup_warmup(train_arg)
 
-        # Token setup
-        self.pad_token = dataset.word_vocab.word2idx["<pad>"]
-        self.unk_token = dataset.word_vocab.word2idx["<unk>"]
-        self.mask_token = dataset.word_vocab.word2idx.get("<mask>", None)
-
         # Check total iteration
         self.iter = (start_epoch - 1) * self.num_batch
         self.pf = []
@@ -329,34 +306,40 @@ class Train(CMD):
 
         # Evaluation before training
         self.epoch = 0
-        self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
-        eval_loader_autodevice = DataPrefetcher(
-            eval_loader, device=self.device
-        )
-        (
-            dev_f1_metric,
-            _,
-            dev_ll,
-            dev_left_metric,
-            dev_right_metric,
-        ) = self.evaluate(
-            eval_loader_autodevice,
-            decode_type=args.test.decode,
-            eval_depth=eval_depth,
-            left_binarization=self.left_binarization,
-            right_binarization=self.right_binarization,
-            rule_update=True,
-        )
-        self.log.info(f"{'dev f1:':6}   {dev_f1_metric}")
-        self.log.info(f"{'dev ll:':6}   {dev_ll}")
+        if getattr(args, "pre_evaluation", False):
+            self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
+            eval_loader_autodevice = DataPrefetcher(
+                eval_loader, device=self.device
+            )
+            (
+                dev_f1_metric,
+                _,
+                dev_ll,
+                dev_left_metric,
+                dev_right_metric,
+            ) = self.evaluate(
+                eval_loader_autodevice,
+                decode_type=args.test.decode,
+                eval_depth=eval_depth,
+                left_binarization=self.left_binarization,
+                right_binarization=self.right_binarization,
+                rule_update=True,
+            )
+            self.log.info(f"{'dev f1:':6}   {dev_f1_metric}")
+            self.log.info(f"{'dev ll:':6}   {dev_ll}")
 
-        # Logging
-        self.log_per_epoch(
-            dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
-        )
+            # Logging
+            self.log_per_epoch(
+                dev_f1_metric, dev_ll, dev_left_metric, dev_right_metric
+            )
 
         # Watch model
-        wandb.watch(self.model, log="all", log_freq=1)
+        if getattr(args, "wandb", False):
+            if getattr(args.wandb, "debug", False):
+                self.watch_model = True
+                wandb.watch(self.model, log="all", log_freq=1)
+            else:
+                self.watch_model = False
 
         for epoch in range(start_epoch, train_arg.max_epoch + 1):
             """
@@ -398,6 +381,7 @@ class Train(CMD):
 
             start = datetime.now()
             self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
+
             ##############
             #  Training  #
             ##############
@@ -496,8 +480,12 @@ class Train(CMD):
         #     tree_path = self.args.save_dir
         #     tree_tag = self.args.model.name
 
-        self.writer.flush()
-        self.writer.close()
-        self.run.finish()
+        if getattr(args, "tensorboard", False):
+            self.writer.flush()
+            self.writer.close()
+
+        if getattr(args, "wandb", False):
+            self.run.finish()
+
         self.log.info("End Training.")
         self.log.info(f"The model is saved in the directory: {args.save_dir}")

@@ -61,46 +61,37 @@ class CMD(object):
         if not (iter != start and iter % step == 0):
             return
 
-        # Log training average likelihood
-        self.writer.add_scalar(
-            "train/avg_likelihood", self.train_ll.avg_likelihood, iter
-        )
-        # Log training perlexity
-        self.writer.add_scalar(
-            "train/perplexity", self.train_ll.perplexity, iter
-        )
-        self.writer.add_scalar(
-            "train/avg_token", self.train_ll.avg_token, iter
-        )
-        self.run.log(
-            {
-                "train/step": iter,
-                "train/avg_likelihood": self.train_ll.avg_likelihood,
-                "train/perplexity": self.train_ll.perplexity,
-                "train/avg_token": self.train_ll.avg_token,
-            }
-        )
-        self.train_ll = LikelihoodMetric()
-        # Log lambda for warm up
-        # self.writer.add_scalar("train/lambda", self.dambda, iter)
-
-        # metrics = self.total_metrics
-        # for k, v in metrics.items():
-        #     self.writer.add_scalar(f"train/{k}", metrics[k] / step, iter)
-
-        # initialize metrics
-        # self.total_loss = 0
-        # self.total_len = 0
-        # for k in metrics.keys():
-        #     metrics[k] = 0
-
-        if hasattr(self.model, "pf"):
-            self.writer.add_histogram(
-                "train/partition_number",
-                self.model.pf.detach().cpu(),
-                iter,
+        if getattr(self.args, "tensorboard", False):
+            # Log training average likelihood
+            self.writer.add_scalar(
+                "train/avg_likelihood", self.train_ll.avg_likelihood, iter
             )
-            self.pf = []
+            # Log training perlexity
+            self.writer.add_scalar(
+                "train/perplexity", self.train_ll.perplexity, iter
+            )
+            self.writer.add_scalar(
+                "train/avg_token", self.train_ll.avg_token, iter
+            )
+            if hasattr(self.model, "pf"):
+                self.writer.add_histogram(
+                    "train/partition_number",
+                    self.model.pf.detach().cpu(),
+                    iter,
+                )
+                self.pf = []
+
+        if getattr(self.args, "wandb", False):
+            self.run.log(
+                {
+                    "train/step": iter,
+                    "train/avg_likelihood": self.train_ll.avg_likelihood,
+                    "train/perplexity": self.train_ll.perplexity,
+                    "train/avg_token": self.train_ll.avg_token,
+                }
+            )
+
+        self.train_ll = LikelihoodMetric()
 
         return
 
@@ -139,8 +130,11 @@ class CMD(object):
                 gold_tree = None
 
             # Set forward hook
-            if self.iter % 1000 == 0:
-                self.model.set_forward_hooks(self.run, self.iter, once=True)
+            if getattr(self.args, "wandb", False) and self.watch_model:
+                if self.iter % 1000 == 0:
+                    self.model.set_forward_hooks(
+                        self.run, self.iter, once=True
+                    )
 
             # Gradient zero
             self.optimizer.zero_grad()
@@ -184,13 +178,6 @@ class CMD(object):
 
             # Gradient update
             self.optimizer.step()
-
-            # writer
-
-            # for k in self.total_metrics.keys():
-            #     if not k in self.total_metrics:
-            #         self.total_metrics[k] = 0
-            #     self.total_metrics[k] += self.model.metrics[k].mean().item()
 
             if hasattr(self.model, "pf"):
                 self.pf = (

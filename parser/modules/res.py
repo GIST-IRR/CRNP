@@ -36,6 +36,7 @@ class ResLayer(nn.Module):
         out_dim,
         activation="relu",
         norm=None,
+        dropout=0.0,
         elementwise_affine=True,
         add_first=False,
         norm_first=False,
@@ -46,6 +47,7 @@ class ResLayer(nn.Module):
         self.add_first = add_first
         self.norm_first = norm_first
         self.version = version
+        self.dropout = dropout
 
         if activation == "relu":
             activation = nn.ReLU
@@ -91,9 +93,11 @@ class ResLayer(nn.Module):
             self.linear = nn.Sequential(
                 norm(in_dim, elementwise_affine=elementwise_affine),
                 activation(),
+                nn.Dropout(dropout),
                 nn.Linear(in_dim, out_dim),
                 norm(out_dim, elementwise_affine=elementwise_affine),
                 activation(),
+                nn.Dropout(dropout),
                 nn.Linear(out_dim, out_dim),
             )
             self.register_module("last_activation", None)

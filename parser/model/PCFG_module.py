@@ -36,12 +36,14 @@ class UnaryRule_parameterizer(nn.Module):
         first_weight_norm=False,
         last_weight_norm=False,
         temp=1,
+        last_layer=True,
         last_layer_bias=True,
         elementwise_affine=True,
         residual="standard",
         res_version=1,
         res_add_first=False,
         res_norm_first=False,
+        res_dropout=0.0,
     ):
         super().__init__()
         self.dim = dim
@@ -50,7 +52,6 @@ class UnaryRule_parameterizer(nn.Module):
         self.n_child = n_child
 
         self.scale = scale
-        # self.softmax = softmax
         self.mlp_mode = mlp_mode
         self.temp = temp
 
@@ -98,6 +99,7 @@ class UnaryRule_parameterizer(nn.Module):
                         elementwise_affine=elementwise_affine,
                         add_first=res_add_first,
                         norm_first=res_norm_first,
+                        dropout=res_dropout,
                         version=res_version,
                     )
                 )
@@ -110,10 +112,11 @@ class UnaryRule_parameterizer(nn.Module):
                 )
                 # self.rule_mlp.append(nn.LeakyReLU())
             # Last Layer
-            ll = nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias)
-            if last_weight_norm:
-                ll = weight_norm(ll)
-            self.rule_mlp.append(ll)
+            if last_layer:
+                ll = nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias)
+                if last_weight_norm:
+                    ll = weight_norm(ll)
+                self.rule_mlp.append(ll)
         elif mlp_mode == "single":
             l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
             if first_weight_norm:

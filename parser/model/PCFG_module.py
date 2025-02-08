@@ -8,12 +8,190 @@ import torch.nn.functional as F
 import torch.distributions as dist
 from torch.nn.utils.parametrizations import orthogonal, weight_norm
 
-from ..modules.res import ResLayer, Bilinear_ResLayer
+from ..modules.res import ResLayer, Bilinear_ResLayer, default_residual_config
 from ..modules.norm import MeanOnlyLayerNorm
 
 
 def normalize(x, dim=-1):
     return x - x.mean(dim, keepdim=True)
+
+
+class Rule_Parameterizer(nn.Module):
+    def __init__(
+        self,
+        dim,
+        n_parent,
+        n_child,
+        h_dim=None,
+        shared_child=None,
+        activation="relu",
+        mlp_mode="standard",
+        num_res_blocks=2,
+        first_layer_norm=False,
+        last_layer_norm=False,
+        first_weight_norm=False,
+        last_weight_norm=False,
+        last_layer=True,
+        last_layer_bias=True,
+        elementwise_affine=True,
+        residual=ResLayer,
+        residual_config=default_residual_config,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.h_dim = h_dim if h_dim is not None else dim
+        self.n_parent = n_parent
+        self.n_child = n_child
+        self.mlp_mode = mlp_mode
+
+        if mlp_mode == "standard":
+            self.rule_mlp = nn.Sequential()
+            # First layer
+            fl = nn.Linear(self.dim, self.h_dim)
+            if first_weight_norm:
+                fl = weight_norm(fl)
+            self.rule_mlp.append(fl)
+            # Layer Norm
+            if first_layer_norm:
+                self.rule_mlp.append(
+                    nn.LayerNorm(
+                        self.h_dim, elementwise_affine=elementwise_affine
+                    )
+                )
+                self.rule_mlp.append(nn.LeakyReLU())
+            # Residual Blocks
+            for _ in range(num_res_blocks):
+                self.rule_mlp.append(
+                    residual(
+                        self.h_dim,
+                        self.h_dim,
+                        **residual_config,
+                    )
+                )
+            # Last Layer Norm
+            if last_layer_norm:
+                self.rule_mlp.append(
+                    nn.LayerNorm(
+                        self.h_dim, elementwise_affine=elementwise_affine
+                    )
+                )
+                # self.rule_mlp.append(nn.LeakyReLU())
+            # Last Layer
+            if last_layer:
+                ll = nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias)
+                if last_weight_norm:
+                    ll = weight_norm(ll)
+                self.rule_mlp.append(ll)
+
+        elif mlp_mode == "single":
+            l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
+            if last_weight_norm:
+                l = weight_norm(l)
+            self.rule_mlp = nn.Sequential(l)
+
+        elif mlp_mode == None:
+            self.register_module("rule_mlp", None)
+
+        if shared_child:
+            self.rule_mlp[-1].weight = shared_child
+
+    def set_shared_child(self, shared_child):
+        self.rule_mlp[-1].weight = shared_child
+        self.n_child = shared_child.shape[0]
+
+    def forward(self, parent_emb, softmax="log_softmax"):
+        rule_prob = self.rule_mlp(parent_emb)
+
+        if softmax == "log_softmax":
+            rule_prob = rule_prob.log_softmax(-1)
+        elif softmax == "softmax":
+            rule_prob = rule_prob.softmax(-1)
+
+        return rule_prob
+
+
+class new_binaryRule_Parameterzer(Rule_Parameterizer):
+    def __init__(self, dim, NT, T, compose_fn=None, **kwargs):
+        self.NT = NT
+        self.T = T
+        self.NT_T = self.NT + self.T
+        super().__init__(
+            dim,
+            n_parent=NT,
+            n_child=self.NT_T**2,
+            **kwargs,
+        )
+        if self.shared_nonterm and self.shared_term:
+            if compose_fn == "compose":
+                self.children_compose = nn.Linear(self.dim * 2, self.dim)
+            elif compose_fn == "compose_mlp":
+                self.children_compose = nn.Sequential(
+                    nn.Linear(self.dim * 2, self.dim),
+                    nn.ReLU(),
+                    nn.Linear(self.dim, self.dim),
+                )
+            elif compose_fn == "expose":
+                self.parent_expose = nn.Linear(self.dim, self.dim * 2)
+            else:
+                self.register_parameter("children_compose", None)
+
+    def set_nonterm_symbol(self, nonterm):
+        self.nonterm_emb = nonterm
+        self.NT = nonterm.shape[0]
+        self.NT_T = self.NT + self.T
+
+    def set_term_symbol(self, term):
+        self.term_emb = term
+        self.T = term.shape[0]
+        self.NT_T = self.NT + self.T
+
+    def get_children_emb(self):
+        children_emb = torch.cat([self.nonterm_emb, self.term_emb])
+        children_emb = torch.cat(
+            [
+                children_emb.unsqueeze(1).expand(-1, self.NT_T, -1),
+                children_emb.unsqueeze(0).expand(self.NT_T, -1, -1),
+            ],
+            dim=2,
+        )
+        # children_emb = self.children_compose(children_emb)
+        return children_emb
+
+    def setup_emb(self, parent_emb):
+        nonterm_emb = parent_emb
+        children_emb = self.get_children_emb()
+        if self.compose_fn == "compose":
+            children_emb = self.children_compose(children_emb)
+        elif self.compose_fn == "expose":
+            nonterm_emb = self.parent_expose(nonterm_emb)
+        return nonterm_emb, children_emb
+
+    def forward(self, parent_emb=None, softmax="log_softmax", reshape=False):
+        if parent_emb is None:
+            parent_emb = self.nonterm_emb
+
+        if self.shared_nonterm and self.shared_term:
+            nonterm_emb, children_emb = self.setup_emb()
+            children_emb = children_emb.reshape(self.NT_T**2, -1)
+            nonterm_prob = nonterm_emb @ children_emb.T
+        else:
+            nonterm_prob = self.rule_mlp(parent_emb)
+
+        if self.norm is not None:
+            nonterm_prob = self.norm(nonterm_prob)
+            # nonterm_prob = self.norm_std * nonterm_prob
+
+        if softmax == "log_softmax":
+            nonterm_prob = nonterm_prob / self.temperature
+            nonterm_prob = nonterm_prob.log_softmax(-1)
+        elif softmax == "softmax":
+            nonterm_prob = nonterm_prob / self.temperature
+            nonterm_prob = nonterm_prob.softmax(-1)
+
+        if reshape:
+            nonterm_prob = nonterm_prob.reshape(self.NT, self.NT_T, self.NT_T)
+
+        return nonterm_prob
 
 
 class UnaryRule_parameterizer(nn.Module):
@@ -200,7 +378,6 @@ class Nonterm_parameterizer(nn.Module):
         num_res_blocks=2,
         compose_fn="compose",
         scale=False,
-        softmax=True,
         norm=None,
         last_norm=None,
         temp=1,

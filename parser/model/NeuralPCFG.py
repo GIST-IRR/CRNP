@@ -11,6 +11,7 @@ from parser.pfs.partition_function import PartitionFunction
 from ..pcfgs.pcfg import PCFG
 from .PCFG_module import (
     PCFG_module,
+    Rule_Parameterizer,
     Nonterm_parameterizer,
     UnaryRule_parameterizer,
 )
@@ -78,36 +79,38 @@ class NeuralPCFG(PCFG_module):
     def _embedding_sharing(self):
         if self.embedding_sharing:
             print("embedding sharing")
-            self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
-            self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
-        else:
-            self.nonterm_emb = None
-            self.term_emb = None
+            # self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
+            # self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
+            # self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
+        # else:
+        #     self.root_emb = None
+        #     self.nonterm_emb = None
+        #     self.term_emb = None
 
     def _init_grammar(self):
         self._embedding_sharing()
+        self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
+        self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
+        self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
         # terms
-        self.terms = UnaryRule_parameterizer(
+        self.terms = Rule_Parameterizer(
             self.s_dim,
             self.T,
             self.V,
-            parent_emb=self.term_emb,
             **self.cfgs.unary,
         )
-        self.nonterms = Nonterm_parameterizer(
+        self.nonterms = Rule_Parameterizer(
             self.s_dim,
             self.NT,
-            self.T,
-            nonterm_emb=self.nonterm_emb,
-            term_emb=self.term_emb,
+            self.NT_T**2,
             **self.cfgs.binary,
         )
         # root
-        self.root = UnaryRule_parameterizer(
+        self.root = Rule_Parameterizer(
             self.s_dim,
             1,
             self.NT,
-            child_emb=self.nonterm_emb,
+            shared_child=self.nonterm_emb if self.embedding_sharing else None,
             **self.cfgs.root,
         )
 
@@ -131,11 +134,12 @@ class NeuralPCFG(PCFG_module):
 
     def get_grammar(self, input=None):
         # Root
-        root = self.root()
+        root = self.root(self.root_emb)
         # Rule
-        rule = self.nonterms(reshape=True)
+        rule = self.nonterms(self.nonterm_emb)
+        rule = rule.reshape(self.NT, self.NT_T, self.NT_T)
         # Unary
-        unary = self.terms()
+        unary = self.terms(self.term_emb)
 
         # for gradient conflict by using gradients of rules
         if self.training:

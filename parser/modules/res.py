@@ -29,6 +29,37 @@ class Relu_Sinusoid(nn.Module):
         return F.relu(input) + torch.sin(input)
 
 
+class ResidualConfig:
+    def __init__(
+        self,
+        version=1,
+        activation="relu",
+        norm="layer",
+        elementwise_affine=True,
+        add_first=False,
+        norm_first=False,
+        dropout=0.0,
+    ):
+        self.version = version
+        self.activation = activation
+        self.norm = norm
+        self.elementwise_affine = elementwise_affine
+        self.add_first = add_first
+        self.norm_first = norm_first
+        self.dropout = dropout
+
+
+default_residual_config = {
+    "version": 1,
+    "activation": "relu",
+    "norm": "layer",
+    "elementwise_affine": True,
+    "add_first": False,
+    "norm_first": False,
+    "dropout": 0.0,
+}
+
+
 class ResLayer(nn.Module):
     def __init__(
         self,

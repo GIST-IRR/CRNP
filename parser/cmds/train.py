@@ -5,6 +5,7 @@ from parser.cmds.cmd import CMD
 from parser.helper.metric import LikelihoodMetric, Metric
 from parser.helper.loader_wrapper import DataPrefetcher
 import torch
+from torch.optim import lr_scheduler
 
 # from parser.helper.util import *
 from parser.helper.data_module import DataModule
@@ -246,11 +247,27 @@ class Train(CMD):
         self.model = get_model_args(
             args.model, self.device, checkpoint["model"]
         )
+        if hasattr(args, "pretrained_terms"):
+            self.model.load_state_dict(
+                torch.load(
+                    args.pretrained_terms,
+                    map_location=self.device,
+                )["model"],
+                module="terms",
+                frozen=True,
+            )
 
         # Setup optimizer
         self.optimizer = get_optimizer_args(
             args.optimizer, self.model.parameters(), checkpoint["optimizer"]
         )
+        if hasattr(self.args, "scheduler"):
+            self.lr_scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
+                self.optimizer,
+                T_0=self.args.scheduler.T_0,
+                T_mult=self.args.scheduler.T_mult,
+                eta_min=self.args.scheduler.eta_min,
+            )
 
         # Setup logger
         self.setup_logger()
@@ -380,7 +397,10 @@ class Train(CMD):
             )
 
             start = datetime.now()
-            self.log.info(f"Epoch {self.epoch} / {self.train_arg.max_epoch}:")
+            inst = f"Epoch {self.epoch} / {self.train_arg.max_epoch}:"
+            if hasattr(self, "lr_scheduler"):
+                inst = f"LR={self.lr_scheduler.get_last_lr()};" + inst
+            self.log.info(inst)
 
             ##############
             #  Training  #

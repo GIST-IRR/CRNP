@@ -5,10 +5,18 @@ import torch
 import os
 from pathlib import Path
 from copy import deepcopy
+import csv
 from itertools import repeat
 
 from collections import Counter, defaultdict
 import matplotlib.pyplot as plt
+
+
+def read_tsv_tensor(f):
+    with open(f, "r") as f:
+        rd = csv.reader(f, delimiter="\t")
+        tmp = torch.tensor([list(map(float, r)) for r in rd])
+    return tmp
 
 
 def outlier(data, method="quantile", threshold=3.0):
@@ -175,8 +183,16 @@ def sort_span(span):
     return span
 
 
-def span_to_tree(span):
-    return Tree.fromlist(span_to_list(span))
+def span_to_tree_with_sent(span, sent, tag=True):
+    tree = span_to_tree(span, tag)
+    for p, w in zip(tree.treepositions("leaves"), sent):
+        tree[p] = w
+    return tree
+
+
+def span_to_tree(span, tag=True):
+    span = sort_span(span)
+    return Tree.fromlist(span_to_list(span, tag=tag))
 
 
 def span_to_list_old(span):
@@ -214,16 +230,23 @@ def span_to_list_old(span):
     return [label] + children
 
 
-def span_to_list(span):
+def span_to_list(span, tag=True):
     root = span[0]
     start, end = root[:2]
 
+    if tag:
+        nt_tag = "NT-"
+        t_tag = "T-"
+    else:
+        nt_tag = ""
+        t_tag = ""
+
     # Check trivial span
     if root[0] + 1 == root[1]:
-        label = f"T-{root[2]}" if len(root) >= 3 else "T"
+        label = f"{t_tag}{root[2]}" if len(root) >= 3 else "T"
         return [label, ["word"]]
 
-    label = f"NT-{root[2]}" if len(root) >= 3 else "NT"
+    label = f"{nt_tag}{root[2]}" if len(root) >= 3 else "NT"
     # Check single span
     if len(span) == 1:
         size = end - start
@@ -271,7 +294,7 @@ def span_to_list(span):
             n_children.append([t])
     children = n_children
 
-    children = [span_to_list(c) for c in children]
+    children = [span_to_list(c, tag=tag) for c in children]
 
     return [label] + children
 

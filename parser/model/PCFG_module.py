@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from argparse import ArgumentError
 import math
 
@@ -17,6 +18,7 @@ def normalize(x, dim=-1):
 
 
 class Rule_Parameterizer(nn.Module):
+
     def __init__(
         self,
         dim,
@@ -25,15 +27,16 @@ class Rule_Parameterizer(nn.Module):
         h_dim=None,
         shared_child=None,
         activation="relu",
+        norm="rms",
         mlp_mode="standard",
-        num_res_blocks=2,
         first_layer_norm=False,
         last_layer_norm=False,
         first_weight_norm=False,
         last_weight_norm=False,
-        last_layer=True,
+        last_layer="linear",
         last_layer_bias=True,
         elementwise_affine=True,
+        num_res_blocks=2,
         residual=ResLayer,
         residual_config=default_residual_config,
     ):
@@ -43,8 +46,9 @@ class Rule_Parameterizer(nn.Module):
         self.n_parent = n_parent
         self.n_child = n_child
         self.mlp_mode = mlp_mode
+        self.last_layer = last_layer
 
-        if mlp_mode == "standard":
+        if self.mlp_mode in ["standard", "mlp"]:
             self.rule_mlp = nn.Sequential()
             # First layer
             fl = nn.Linear(self.dim, self.h_dim)
@@ -59,15 +63,23 @@ class Rule_Parameterizer(nn.Module):
                     )
                 )
                 self.rule_mlp.append(nn.LeakyReLU())
+                self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
             # Residual Blocks
             for _ in range(num_res_blocks):
-                self.rule_mlp.append(
-                    residual(
-                        self.h_dim,
-                        self.h_dim,
-                        **residual_config,
+                if self.mlp_mode == "standard":
+                    self.rule_mlp.append(
+                        residual(
+                            self.h_dim,
+                            self.h_dim,
+                            **residual_config,
+                        )
                     )
-                )
+                elif self.mlp_mode == "mlp":
+                    if norm is not None:
+                        self.rule_mlp.append(norm(self.h_dim))
+                    if activation is not None:
+                        self.rule_mlp.append(activation())
+                    self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
             # Last Layer Norm
             if last_layer_norm:
                 self.rule_mlp.append(
@@ -77,19 +89,26 @@ class Rule_Parameterizer(nn.Module):
                 )
                 # self.rule_mlp.append(nn.LeakyReLU())
             # Last Layer
-            if last_layer:
+            if last_layer == "linear":
                 ll = nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias)
                 if last_weight_norm:
                     ll = weight_norm(ll)
                 self.rule_mlp.append(ll)
+            elif last_layer == "normalized":
+                self.ll = nn.Parameter(torch.empty(self.n_child, self.h_dim))
+                nn.init.xavier_uniform_(self.ll)
 
-        elif mlp_mode == "single":
-            l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
-            if last_weight_norm:
-                l = weight_norm(l)
-            self.rule_mlp = nn.Sequential(l)
+        elif self.mlp_mode == "single":
+            if last_layer == "linear":
+                l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
+                if last_weight_norm:
+                    l = weight_norm(l)
+                self.rule_mlp = nn.Sequential(l)
+            elif last_layer == "normalized":
+                self.ll = nn.Parameter(torch.empty(self.n_child, self.dim))
+                nn.init.xavier_uniform_(self.ll)
 
-        elif mlp_mode == None:
+        elif self.mlp_mode == None:
             self.register_module("rule_mlp", None)
 
         if shared_child:
@@ -100,7 +119,14 @@ class Rule_Parameterizer(nn.Module):
         self.n_child = shared_child.shape[0]
 
     def forward(self, parent_emb, softmax="log_softmax"):
-        rule_prob = self.rule_mlp(parent_emb)
+        if hasattr(self, "rule_mlp"):
+            rule_prob = self.rule_mlp(parent_emb)
+        if self.last_layer == "normalized":
+            ll = F.normalize(self.ll, p=2, dim=-1)
+            if hasattr(self, "rule_mlp"):
+                rule_prob = rule_prob @ ll.T
+            else:
+                rule_prob = parent_emb @ ll.T
 
         if softmax == "log_softmax":
             rule_prob = rule_prob.log_softmax(-1)
@@ -110,88 +136,107 @@ class Rule_Parameterizer(nn.Module):
         return rule_prob
 
 
-class new_binaryRule_Parameterzer(Rule_Parameterizer):
-    def __init__(self, dim, NT, T, compose_fn=None, **kwargs):
-        self.NT = NT
-        self.T = T
-        self.NT_T = self.NT + self.T
-        super().__init__(
-            dim,
-            n_parent=NT,
-            n_child=self.NT_T**2,
-            **kwargs,
-        )
-        if self.shared_nonterm and self.shared_term:
-            if compose_fn == "compose":
-                self.children_compose = nn.Linear(self.dim * 2, self.dim)
-            elif compose_fn == "compose_mlp":
-                self.children_compose = nn.Sequential(
-                    nn.Linear(self.dim * 2, self.dim),
-                    nn.ReLU(),
-                    nn.Linear(self.dim, self.dim),
+class Linear_Rule_Parameterizer(nn.Module):
+    def __init__(
+        self,
+        dim,
+        n_parent,
+        n_child,
+        h_dim=None,
+        shared_child=None,
+        activation="relu",
+        norm="rms",
+        mlp_mode="standard",
+        first_layer_norm=False,
+        last_layer_norm=False,
+        first_weight_norm=False,
+        last_weight_norm=False,
+        last_layer="linear",
+        last_layer_bias=True,
+        elementwise_affine=True,
+        num_res_blocks=2,
+        residual=ResLayer,
+        residual_config=default_residual_config,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.h_dim = h_dim if h_dim is not None else dim
+        self.n_parent = n_parent
+        self.n_child = n_child
+        self.mlp_mode = mlp_mode
+        self.last_layer = last_layer
+
+        if self.mlp_mode == "standard":
+            self.rule_mlp = nn.Sequential()
+            # First layer
+            fl = nn.Linear(self.dim, self.h_dim)
+            if first_weight_norm:
+                fl = weight_norm(fl)
+            self.rule_mlp.append(fl)
+            # Layer Norm
+            if first_layer_norm:
+                self.rule_mlp.append(
+                    nn.LayerNorm(
+                        self.h_dim, elementwise_affine=elementwise_affine
+                    )
                 )
-            elif compose_fn == "expose":
-                self.parent_expose = nn.Linear(self.dim, self.dim * 2)
+                self.rule_mlp.append(nn.LeakyReLU())
+                self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
+            # Residual Blocks
+            for _ in range(num_res_blocks):
+                self.rule_mlp.append(nn.RMSNorm(self.h_dim))
+                self.rule_mlp.append(nn.GELU())
+                self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
+            # Last Layer Norms
+            if last_layer_norm:
+                self.rule_mlp.append(
+                    nn.RMSNorm(
+                        self.h_dim, elementwise_affine=elementwise_affine
+                    )
+                )
+                # self.rule_mlp.append(nn.LeakyReLU())
+            # Last Layer
+            if last_layer == "linear":
+                ll = nn.Linear(self.h_dim, self.n_child, bias=last_layer_bias)
+                if last_weight_norm:
+                    ll = weight_norm(ll)
+                self.rule_mlp.append(ll)
+            elif last_layer == "normalized":
+                self.ll = nn.Parameter(torch.empty(self.n_child, self.h_dim))
+                nn.init.xavier_uniform_(self.ll)
+
+        elif self.mlp_mode == "single":
+            l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
+            if last_weight_norm:
+                l = weight_norm(l)
+            self.rule_mlp = nn.Sequential(l)
+
+        elif self.mlp_mode == None:
+            self.register_module("rule_mlp", None)
+
+        if shared_child:
+            self.rule_mlp[-1].weight = shared_child
+
+    def set_shared_child(self, shared_child):
+        self.rule_mlp[-1].weight = shared_child
+        self.n_child = shared_child.shape[0]
+
+    def forward(self, parent_emb, softmax="log_softmax"):
+        if hasattr(self, "rule_mlp"):
+            rule_prob = self.rule_mlp(parent_emb)
+        if self.last_layer == "normalized":
+            ll = F.normalize(self.ll, p=2, dim=-1)
+            if hasattr(self, "rule_mlp"):
+                rule_prob = rule_prob @ ll.T
             else:
-                self.register_parameter("children_compose", None)
-
-    def set_nonterm_symbol(self, nonterm):
-        self.nonterm_emb = nonterm
-        self.NT = nonterm.shape[0]
-        self.NT_T = self.NT + self.T
-
-    def set_term_symbol(self, term):
-        self.term_emb = term
-        self.T = term.shape[0]
-        self.NT_T = self.NT + self.T
-
-    def get_children_emb(self):
-        children_emb = torch.cat([self.nonterm_emb, self.term_emb])
-        children_emb = torch.cat(
-            [
-                children_emb.unsqueeze(1).expand(-1, self.NT_T, -1),
-                children_emb.unsqueeze(0).expand(self.NT_T, -1, -1),
-            ],
-            dim=2,
-        )
-        # children_emb = self.children_compose(children_emb)
-        return children_emb
-
-    def setup_emb(self, parent_emb):
-        nonterm_emb = parent_emb
-        children_emb = self.get_children_emb()
-        if self.compose_fn == "compose":
-            children_emb = self.children_compose(children_emb)
-        elif self.compose_fn == "expose":
-            nonterm_emb = self.parent_expose(nonterm_emb)
-        return nonterm_emb, children_emb
-
-    def forward(self, parent_emb=None, softmax="log_softmax", reshape=False):
-        if parent_emb is None:
-            parent_emb = self.nonterm_emb
-
-        if self.shared_nonterm and self.shared_term:
-            nonterm_emb, children_emb = self.setup_emb()
-            children_emb = children_emb.reshape(self.NT_T**2, -1)
-            nonterm_prob = nonterm_emb @ children_emb.T
-        else:
-            nonterm_prob = self.rule_mlp(parent_emb)
-
-        if self.norm is not None:
-            nonterm_prob = self.norm(nonterm_prob)
-            # nonterm_prob = self.norm_std * nonterm_prob
+                rule_prob = parent_emb @ ll.T
 
         if softmax == "log_softmax":
-            nonterm_prob = nonterm_prob / self.temperature
-            nonterm_prob = nonterm_prob.log_softmax(-1)
+            rule_prob = rule_prob.log_softmax(-1)
         elif softmax == "softmax":
-            nonterm_prob = nonterm_prob / self.temperature
-            nonterm_prob = nonterm_prob.softmax(-1)
+            rule_prob = rule_prob.softmax(-1)
 
-        if reshape:
-            nonterm_prob = nonterm_prob.reshape(self.NT, self.NT_T, self.NT_T)
-
-        return nonterm_prob
+        return rule_prob
 
 
 class UnaryRule_parameterizer(nn.Module):
@@ -556,38 +601,52 @@ class PCFG_module(nn.Module):
     def _initialize(self, mode="xavier_uniform", value=0.0):
         if mode == "no_init":
             return
+        elif mode == "orthogonal":
+            nn.init.orthogonal_(self.root_emb)
+            nn.init.orthogonal_(self.nonterm_emb)
+            nn.init.orthogonal_(self.term_emb)
+            return
         # Original Method
+        if self.activation == "gelu":
+            g = 1.0
+        else:
+            g = nn.init.calculate_gain(self.activation)
+
         for n, p in self.named_parameters():
+            if "weight" not in n and "emb" not in n:
+                continue
+            if "parametrizations" in n:
+                continue
             if n in self._no_initialize:
                 continue
             if mode == "xavier_uniform":
                 if p.dim() > 1:
-                    torch.nn.init.xavier_uniform_(p)
+                    nn.init.xavier_uniform_(p, gain=g)
             elif mode == "xavier_normal":
                 if p.dim() > 1:
-                    torch.nn.init.xavier_normal_(p)
+                    nn.init.xavier_normal_(p, gain=g)
             elif mode == "uniform":
                 if p.dim() > 1:
-                    torch.nn.init.uniform_(p)
+                    nn.init.uniform_(p)
             elif mode == "normal":
                 if p.dim() > 1:
-                    torch.nn.init.normal_(p)
-            elif mode == "orthogonal":
-                if p.dim() > 1:
-                    torch.nn.init.orthogonal_(p)
+                    nn.init.normal_(p)
+            # elif mode == "orthogonal":
+            #     if p.dim() > 1:
+            #         nn.init.orthogonal_(p)
             elif mode == "constant":
                 # # Init with constant 0.0009
                 n = n.split(".")[0]
                 if n == "terms":
-                    torch.nn.init.constant_(p, 0.001)
+                    nn.init.constant_(p, 0.001)
                 else:
                     if p.dim() > 1:
-                        torch.nn.init.xavier_uniform_(p)
+                        nn.init.xavier_uniform_(p)
             elif mode == "mean":
                 if p.dim() > 1:
-                    torch.nn.init.xavier_uniform_(p)
+                    nn.init.xavier_uniform_(p)
                 val = p.mean()
-                torch.nn.init.constant_(p, val)
+                nn.init.constant_(p, val)
 
     def _set_configs(self, cfgs):
         self.cfgs = cfgs
@@ -607,12 +666,16 @@ class PCFG_module(nn.Module):
     @property
     def rules(self):
         if getattr(self, "_rules", None) is None:
-            self._rules = self.forward()
+            self._rules = self.get_grammar()
         return self._rules
 
     @rules.setter
     def rules(self, rule):
         self._rules = rule
+
+    @abstractmethod
+    def get_grammar(self):
+        raise NotImplementedError
 
     def clear_grammar(self):
         # This function is used when the network is updated

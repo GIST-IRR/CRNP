@@ -407,6 +407,9 @@ class Train(CMD):
             ##############
             self.train(train_loader_autodevice)
 
+            if hasattr(self, "lr_scheduler"):
+                self.lr_scheduler.step()
+
             ##############
             # Evaluation #
             ##############

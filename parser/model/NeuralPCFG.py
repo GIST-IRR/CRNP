@@ -1,8 +1,9 @@
 import math
+import re
 
 import torch
 import torch.nn as nn
-from torch.distributions.categorical import Categorical
+from torch.distributions import Categorical
 from nltk import Tree
 from nltk.grammar import Nonterminal
 import wandb
@@ -34,6 +35,7 @@ class NeuralPCFG(PCFG_module):
 
         self.s_dim = getattr(args, "s_dim", 256)
         self.init = getattr(args, "init", "xavier_uniform")
+        self.activation = getattr(args, "activation", "relu")
         self.dropout = getattr(args, "dropout", 0.0)
 
         self.temperature = getattr(args, "temperature", 1.0)
@@ -76,12 +78,52 @@ class NeuralPCFG(PCFG_module):
         for handle in self.forward_hooks_handles:
             handle.remove()
 
+    def load_state_dict(
+        self, state_dict, module=None, frozen=False, strict=True, assign=False
+    ):
+        if module is None:
+            return super().load_state_dict(state_dict, strict, assign)
+        elif module == "root":
+            self.root_emb = nn.Parameter(state_dict["root_emb"])
+            std = {
+                k.replace("root."): v
+                for k, v in state_dict.items()
+                if re.match("^root.", k)
+            }
+            self.root.load_state_dict(std)
+            if frozen:
+                self.root_emb.requires_grad_(False)
+                self.root.requires_grad_(False)
+        elif module == "nonterms":
+            self.nonterm_emb = nn.Parameter(state_dict["nonterm_emb"])
+            std = {
+                k.replace("nonterms.", ""): v
+                for k, v in state_dict.items()
+                if re.match("^nonterms.", k)
+            }
+            self.nonterms.load_state_dict(std)
+            if frozen:
+                self.nonterm_emb.requires_grad_(False)
+                self.nonterms.requires_grad_(False)
+        elif module == "terms":
+            self.term_emb = nn.Parameter(state_dict["term_emb"])
+            # self.term_emb = nn.Parameter(state_dict["terms.parent_emb"])
+            std = {
+                k.replace("terms.", ""): v
+                for k, v in state_dict.items()
+                if re.match("^terms.", k)
+            }
+            self.terms.load_state_dict(std)
+            if frozen:
+                self.term_emb.requires_grad_(False)
+                self.terms.requires_grad_(False)
+
     def _embedding_sharing(self):
         if self.embedding_sharing:
             print("embedding sharing")
-            # self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
-            # self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
-            # self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
+        #     self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
+        #     self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
+        #     self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
         # else:
         #     self.root_emb = None
         #     self.nonterm_emb = None
@@ -92,13 +134,14 @@ class NeuralPCFG(PCFG_module):
         self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
         self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
         self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
-        # terms
+        # unary
         self.terms = Rule_Parameterizer(
             self.s_dim,
             self.T,
             self.V,
             **self.cfgs.unary,
         )
+        # binary
         self.nonterms = Rule_Parameterizer(
             self.s_dim,
             self.NT,
@@ -132,20 +175,27 @@ class NeuralPCFG(PCFG_module):
             ent_prob = torch.cat([r_ent, n_ent, t_ent]).mean()
         return ent_prob
 
-    def get_grammar(self, input=None):
+    def get_grammar(self, input=None, softmax="log_softmax"):
         # Root
-        root = self.root(self.root_emb)
+        # self.root_tmp = self.root(self.root_emb, softmax=None)
+        root = self.root(self.root_emb, softmax=softmax)
         # Rule
-        rule = self.nonterms(self.nonterm_emb)
-        rule = rule.reshape(self.NT, self.NT_T, self.NT_T)
+        # self.rule_tmp = self.nonterms(self.nonterm_emb, softmax=None)
+        rule = self.nonterms(self.nonterm_emb, softmax=softmax)
         # Unary
-        unary = self.terms(self.term_emb)
+        # self.unary_tmp = self.terms(self.term_emb, softmax=None)
+        unary = self.terms(self.term_emb, softmax=softmax)
+
+        rule = rule.reshape(self.NT, self.NT_T, self.NT_T)
 
         # for gradient conflict by using gradients of rules
-        if self.training:
-            root.retain_grad()
-            rule.retain_grad()
-            unary.retain_grad()
+        # if self.training:
+        #     root.retain_grad()
+        #     rule.retain_grad()
+        #     # unary.retain_grad()
+        #     self.root_tmp.retain_grad()
+        #     self.rule_tmp.retain_grad()
+        #     # self.unary_tmp.retain_grad()
 
         self.clear_metrics()  # clear metrics becuase we have new rules
 
@@ -193,26 +243,7 @@ class NeuralPCFG(PCFG_module):
                 dropout=self.dropout,
             )
 
-        # unary_global = Categorical(
-        #     logits=self.rules["unary"].logsumexp(0) - math.log(self.T)
-        # )
-        # unary_global_entropy = unary_global.entropy()
-        # unary_jsd = metric.pairwise_js_div(self.rules["unary"])
-        # unary_jsd = metric.geometric_mean(unary_jsd)
-
-        # binary_global = Categorical(
-        #     logits=self.rules["rule"].flatten(1).logsumexp(0)
-        #     - math.log(self.NT)
-        # )
-        # binary_global_entropy = binary_global.entropy()
-
-        # binary_jsd = metric.pairwise_js_div(self.rules["rule"].flatten(1))
-        # # binary_jsd = binary_jsd.log().mean().exp()
-        # binary_jsd = metric.geometric_mean(binary_jsd)
-
-        # ent = unary_global_entropy + binary_global_entropy
-        # jsd = unary_jsd + binary_jsd
-
+        # result["partition"] = result["partition"] / (2 * input["seq_len"] - 1)
         return -result["partition"]
 
     def check_rule_update(self, rule_update):
@@ -227,7 +258,7 @@ class NeuralPCFG(PCFG_module):
         if need_update:
             self.rules = self.get_grammar()
 
-    def decode(self, rules, lens, decode_type, label=False):
+    def decode(self, rules, lens, decode_type, label=False, tree=None):
         if decode_type == "viterbi":
             result = self.pcfg(
                 rules,
@@ -235,6 +266,7 @@ class NeuralPCFG(PCFG_module):
                 viterbi=True,
                 mbr=False,
                 label=label,
+                tree=tree,
             )
         elif decode_type == "mbr":
             result = self.pcfg(
@@ -243,6 +275,7 @@ class NeuralPCFG(PCFG_module):
                 viterbi=False,
                 mbr=True,
                 label=label,
+                tree=tree,
             )
         else:
             raise NotImplementedError
@@ -254,11 +287,14 @@ class NeuralPCFG(PCFG_module):
         decode_type="mbr",
         label=False,
         rule_update=False,
+        tree=None,
         **kwargs,
     ):
         self.check_rule_update(rule_update)
         rules = self.batchify(self.rules, input["word"])
-        result = self.decode(rules, input["seq_len"], decode_type, label)
+        result = self.decode(
+            rules, input["seq_len"], decode_type, label=label, tree=tree
+        )
 
         return result
 
@@ -283,3 +319,28 @@ class NeuralPCFG(PCFG_module):
                 left_child, right_child = list(map(label_to_idx, p.rhs()))
             else:
                 raise "Only binary or unary rules can be calculated."
+
+    def sample_trees(self, n=1, rule_update=False):
+        self.check_rule_update(rule_update)
+        logits = self.rules["root"][0]
+        root_dist = Categorical(logits=logits)
+        root_idx = root_dist.sample((1,))
+        root_prob = logits[root_idx]
+
+        symbol_stack = [root_idx]
+
+        def get_children(symbol_idx):
+            if symbol_idx < self.NT:
+                logits = self.rules["rule"].flatten(1)
+            else:
+                logits = self.rules["unary"]
+            logits = logits[symbol_idx][0]
+            dist = Categorical(logits=logits)
+            n_idx = dist.sample((1,))
+            n_prob = logits[n_idx]
+            n_idx = torch.unravel_index(n_idx, logits.shape)
+            return n_idx, n_prob
+
+        n_idx, n_prob = get_children(root_idx)
+        for i in n_idx:
+            idx, prob = get_children(i)

@@ -52,7 +52,7 @@ class ResidualConfig:
 default_residual_config = {
     "version": 1,
     "activation": "relu",
-    "norm": "layer",
+    "norm": None,
     "elementwise_affine": True,
     "add_first": False,
     "norm_first": False,
@@ -82,8 +82,10 @@ class ResLayer(nn.Module):
 
         if activation == "relu":
             activation = nn.ReLU
-        elif activation == "leaky-relu":
+        elif activation == "leaky_relu":
             activation = nn.LeakyReLU
+        elif activation == "gelu":
+            activation = nn.GELU
         elif activation == "tanh":
             activation = nn.Tanh
         elif activation == "sine":
@@ -124,14 +126,14 @@ class ResLayer(nn.Module):
             self.linear = nn.Sequential(
                 norm(in_dim, elementwise_affine=elementwise_affine),
                 activation(),
-                nn.Dropout(dropout),
+                # nn.Dropout(dropout),
                 nn.Linear(in_dim, out_dim),
                 norm(out_dim, elementwise_affine=elementwise_affine),
                 activation(),
-                nn.Dropout(dropout),
+                # nn.Dropout(dropout),
                 nn.Linear(out_dim, out_dim),
             )
-            self.register_module("last_activation", None)
+            # self.register_module("last_activation", None)
 
     def forward(self, x):
         if self.version == 1:

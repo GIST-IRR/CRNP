@@ -101,6 +101,8 @@ class ResLayer(nn.Module):
             norm = MeanOnlyLayerNorm
         elif norm == "batch":
             norm = nn.BatchNorm1d
+        elif norm == "rms":
+            norm = nn.RMSNorm
 
         if version == 1:
             if norm is None:

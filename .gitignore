@@ -25,6 +25,7 @@ config/*
 # Analyzer
 !analyzer/trees/
 analyzer/raw/
+analyzer/results/
 
 # EVALB
 EVALB/

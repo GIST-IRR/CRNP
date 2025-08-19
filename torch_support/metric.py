@@ -106,17 +106,18 @@ def pairwise_kl_divergence(p, q=None, log=False, batch=False):
 def pairwise_js_div(org, logit=True, reduction=None):
     n = org.shape[0]
     idx = torch.combinations(torch.arange(n))
+    idx = idx.to(org.device)
 
     p, q = org[idx[:, 0]], org[idx[:, 1]]
     out = jensen_shannon_divergence(p, q, logit=logit)
 
     if reduction == "arithmetic":
-        return out.mean()
+        return out.mean(), idx
     elif reduction == "geometric":
-        return out.log().mean().exp()
+        return out.log().mean().exp(), idx
     elif reduction == None:
-        return out
-    return out
+        return out, idx
+    return out, idx
 
 
 def mutual_information(

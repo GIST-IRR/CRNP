@@ -122,6 +122,7 @@ class TDPCFG(PCFG_base):
         tree=None,
         mbr=False,
         viterbi=False,
+        label=False,
         **kwargs,
     ):
         assert viterbi is not True
@@ -148,6 +149,10 @@ class TDPCFG(PCFG_base):
             if tree.shape[-1] == S:
                 pos_tree = tree[..., NT:]
                 tree = tree[..., :NT]
+            else:
+                pos_tree = None
+        else:
+            pos_tree = None
 
         @checkpoint
         def transform_left_t(x, left):

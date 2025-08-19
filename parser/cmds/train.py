@@ -19,6 +19,8 @@ import math
 import pickle
 from utils import tensor_to_heatmap, span_to_tree_with_sent
 
+import numpy as np
+
 import torch_support.reproducibility as reproducibility
 from torch_support.train_support import get_logger
 from torch_support.load_model import (
@@ -70,7 +72,7 @@ class Train(CMD):
         # F1 score for each epoch
         tag = "valid"
 
-        unary_jsd = metric.pairwise_js_div(self.model.rules["unary"])
+        unary_jsd, u_idx = metric.pairwise_js_div(self.model.rules["unary"])
         metric_list = {
             f"{tag}/epoch": self.epoch,
             f"{tag}/avg_likelihood": dev_ll.score,
@@ -88,7 +90,7 @@ class Train(CMD):
         }
 
         if "rule" in self.model.rules:
-            binary_jsd = metric.pairwise_js_div(
+            binary_jsd, b_idx = metric.pairwise_js_div(
                 self.model.rules["rule"].flatten(1)
             )
             metric_list.update(
@@ -106,9 +108,13 @@ class Train(CMD):
                 }
             )
         elif "head" in self.model.rules:
-            head_jsd = metric.pairwise_js_div(self.model.rules["head"])
-            left_jsd = metric.pairwise_js_div(self.model.rules["left"].T)
-            right_jsd = metric.pairwise_js_div(self.model.rules["right"].T)
+            head_jsd, h_idx = metric.pairwise_js_div(self.model.rules["head"])
+            left_jsd, l_idx = metric.pairwise_js_div(
+                self.model.rules["left"].T
+            )
+            right_jsd, r_idx = metric.pairwise_js_div(
+                self.model.rules["right"].T
+            )
             metric_list.update(
                 {
                     f"{tag}/head_local_ppl": metric.local_ppl(
@@ -168,6 +174,54 @@ class Train(CMD):
             f"{tag}/Ex_right_length": dev_right_metric.sentence_ex_l,
         }
 
+        # Histogram
+        if getattr(self.args, "histogram", False):
+            if self.model.terms.last_layer == "normalized":
+                u_p = self.model.terms.rule_mlp(self.model.term_emb).detach()
+                if self.model.terms.last_layer == "normalized":
+                    u_c = self.model.terms.ll.data.detach().clone()
+                else:
+                    u_c = self.model.terms.ll.weight.detach().clone()
+            else:
+                u_p = self.model.terms.rule_mlp[:-1](
+                    self.model.term_emb
+                ).detach()
+                u_c = self.model.terms.rule_mlp[-1].weight.detach().clone()
+            u_p_hist = np.histogram(
+                torch.linalg.norm(u_p, dim=1).cpu().numpy(), bins=10
+            )
+            u_c_hist = np.histogram(
+                torch.linalg.norm(u_c, dim=1).cpu().numpy(), bins=10
+            )
+            u_p_norm = torch.linalg.norm(u_p).cpu().numpy()
+            u_c_norm = torch.linalg.norm(u_c).cpu().numpy()
+            if self.model.nonterms.last_layer == "normalized":
+                b_p = self.model.nonterms.rule_mlp(
+                    self.model.nonterm_emb
+                ).detach()
+                b_c = self.model.nonterms.ll.data.detach().clone()
+            else:
+                b_p = self.model.nonterms.rule_mlp[:-1](
+                    self.model.nonterm_emb
+                ).detach()
+                b_c = self.model.nonterms.rule_mlp[-1].weight.detach().clone()
+            b_p_hist = np.histogram(
+                torch.linalg.norm(b_p, dim=1).cpu().numpy(), bins=10
+            )
+            b_c_hist = np.histogram(
+                torch.linalg.norm(b_c, dim=1).cpu().numpy(), bins=10
+            )
+            b_p_norm = torch.linalg.norm(b_p).cpu().numpy()
+            b_c_norm = torch.linalg.norm(b_c).cpu().numpy()
+            metric_list.update(
+                {
+                    f"{tag}/u_p_norm": u_p_norm,
+                    f"{tag}/u_c_norm": u_c_norm,
+                    f"{tag}/b_p_norm": b_p_norm,
+                    f"{tag}/b_c_norm": b_c_norm,
+                }
+            )
+
         if getattr(self.args, "tensorboard", False):
             for k, v in metric_list.items():
                 self.writer.add_scalar(f"{tag}/{k}", v, self.epoch)
@@ -192,6 +246,15 @@ class Train(CMD):
 
         if getattr(self.args, "wandb", False):
             self.run.log(metric_list)
+            if getattr(self.args, "histogram", False):
+                self.run.log(
+                    {
+                        f"u_p_hist": wandb.Histogram(np_histogram=u_p_hist),
+                        f"u_c_hist": wandb.Histogram(np_histogram=u_c_hist),
+                        f"b_p_hist": wandb.Histogram(np_histogram=b_p_hist),
+                        f"b_c_hist": wandb.Histogram(np_histogram=b_c_hist),
+                    }
+                )
 
     def setup_warmup(self, train_arg):
         train_arg.warmup_iter = int(
@@ -220,6 +283,7 @@ class Train(CMD):
             # Load random state
             worker_init_fn = checkpoint["worker_init_fn"]
             generator = checkpoint["generator"]
+            args.seed = int(str(torch.initial_seed())[:8])
         else:
             checkpoint = {"model": None, "optimizer": None}
             start_epoch = 1

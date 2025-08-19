@@ -100,10 +100,12 @@ class Rule_Parameterizer(nn.Module):
 
         elif self.mlp_mode == "single":
             if last_layer == "linear":
+                # f = nn.Linear(self.dim, self.dim, bias=last_layer_bias)
                 l = nn.Linear(self.dim, self.n_child, bias=last_layer_bias)
                 if last_weight_norm:
                     l = weight_norm(l)
                 self.rule_mlp = nn.Sequential(l)
+                # self.rule_mlp = nn.Sequential(f, l)
             elif last_layer == "normalized":
                 self.ll = nn.Parameter(torch.empty(self.n_child, self.dim))
                 nn.init.xavier_uniform_(self.ll)
@@ -183,10 +185,24 @@ class Linear_Rule_Parameterizer(nn.Module):
                 self.rule_mlp.append(nn.LeakyReLU())
                 self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
             # Residual Blocks
-            for _ in range(num_res_blocks):
-                self.rule_mlp.append(nn.RMSNorm(self.h_dim))
-                self.rule_mlp.append(nn.GELU())
-                self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
+            for i in range(num_res_blocks):
+                # Normalization
+                if residual_config.get("norm") == "rms":
+                    self.rule_mlp.append(nn.RMSNorm(self.h_dim))
+                elif residual_config.get("norm") == "layer":
+                    self.rule_mlp.append(
+                        nn.LayerNorm(
+                            self.h_dim, elementwise_affine=elementwise_affine
+                        )
+                    )
+                # Activation
+                if residual_config.get("activation") == "relu":
+                    self.rule_mlp.append(nn.ReLU())
+                elif residual_config.get("activation") == "gelu":
+                    self.rule_mlp.append(nn.GELU())
+                # Last FCN
+                if i != num_res_blocks - 1 or last_layer != "linear":
+                    self.rule_mlp.append(nn.Linear(self.h_dim, self.h_dim))
             # Last Layer Norms
             if last_layer_norm:
                 self.rule_mlp.append(

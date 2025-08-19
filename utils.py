@@ -11,6 +11,8 @@ from itertools import repeat
 from collections import Counter, defaultdict
 import matplotlib.pyplot as plt
 
+from torch_support.metric import pairwise_js_div
+
 
 def read_tsv_tensor(f):
     with open(f, "r") as f:
@@ -47,47 +49,70 @@ def outlier(data, method="quantile", threshold=3.0):
 
 
 def load_trees(
-    filename, min_len=2, max_len=40, use_span=False, vocab=None, sort=True
+    filename,
+    min_len=2,
+    max_len=40,
+    use_span=False,
+    vocab=None,
+    sort=True,
+    pickle=False,
 ):
     if not isinstance(filename, Path):
         path = Path(filename)
     else:
         path = filename
 
-    with path.open("r") as f:
-        trees = []
-        for line in f:
-            tree = Tree.fromstring(line)
-            sentence = tree.leaves()
-            if len(sentence) < min_len or len(sentence) > max_len:
-                continue
-
-            if use_span:
-                span = tree_to_span(tree, type="tuple")
-            else:
-                span = None
-
-            if vocab:
-                token = list(map(vocab.to_index, clean_word(sentence)))
-            else:
-                token = None
-
-            trees.append(
+    if pickle:
+        with path.open("rb") as f:
+            d = pickle.load(f)
+        vocab = d.get("vocab", None)
+        trees = d.get("trees", [])
+        n_trees = []
+        for t in trees:
+            tree = span_to_tree(t["pred_tree"])
+            n_trees.append(
                 {
-                    "sentence": sentence,
-                    "word": token,
-                    "tree": tree,
-                    "span": span,
+                    "sentence": t["sentence"],
+                    "word": t["word"],
+                    "tree": Tree.fromstring(t["tree"]),
+                    "span": t["pred_tree"],
                 }
             )
-        if sort:
-            trees = sorted(
-                trees,
-                key=lambda x: (
-                    len(x["sentence"]),
-                    x["sentence"],
-                ),
-            )
+    else:
+        with path.open("r") as f:
+            trees = []
+            for line in f:
+                tree = Tree.fromstring(line)
+                sentence = tree.leaves()
+                if len(sentence) < min_len or len(sentence) > max_len:
+                    continue
+
+                if use_span:
+                    span = tree_to_span(tree, type="tuple")
+                else:
+                    span = None
+
+                if vocab:
+                    token = list(map(vocab.to_index, clean_word(sentence)))
+                else:
+                    token = None
+
+                trees.append(
+                    {
+                        "sentence": sentence,
+                        "word": token,
+                        "tree": tree,
+                        "span": span,
+                    }
+                )
+    if sort:
+        trees = sorted(
+            trees,
+            key=lambda x: (
+                len(x["sentence"]),
+                x["sentence"],
+            ),
+        )
     return trees
 
 
@@ -555,6 +580,7 @@ def save_rule_distribution_raw(
     unary=True,
     abs=False,
     local=False,
+    extract_jsd=False,
 ):
     # min max in seed
     if root:
@@ -565,18 +591,29 @@ def save_rule_distribution_raw(
     # min max in local
     if rule:
         try:
-            rule_data = model.nonterms(reshape=True)
+            # rule_data = model.nonterms(reshape=True)
+            rule_data = model.nonterms(model.nonterm_emb, "log_softmax")
         except:
             rule_data = model.nonterms()
 
+        # Extract based on JSD
+        if extract_jsd:
+            jsd, idx = pairwise_js_div(rule_data)
+            idx_min = idx[jsd.topk(2, largest=False)[1]].flatten()
+            rule_data = rule_data[idx_min]
+
         if not isinstance(rule_data, tuple):
+            # rule_data = rule_data.reshape(-1, model.NT_T, model.NT_T)
             rule_data = rule_data.detach().cpu()
             rule_dfs = rule_data.numpy()
         else:
             rule = False
         rule_dfs = np.exp(rule_dfs)
 
-        fig, axs = plt.subplots(5, 6, figsize=(70, 50))
+        if extract_jsd:
+            fig, axs = plt.subplots(2, 2, figsize=(8, 8))
+        else:
+            fig, axs = plt.subplots(5, 6, figsize=(70, 50))
         for i, ax in enumerate(axs.flatten()):
             dfs = rule_dfs[i].flatten()
             ax.plot(np.arange(0, dfs.shape[0]), dfs)
@@ -600,14 +637,24 @@ def save_rule_distribution_raw(
 
     # absolute min max
     if unary:
-        unary_data = model.terms().detach().cpu()
+        try:
+            unary_data = model.terms()
+        except:
+            unary_data = model.terms(model.term_emb, "log_softmax")
+
+        if extract_jsd:
+            jsd, idx = pairwise_js_div(unary_data)
+            idx_min = idx[jsd.topk(2, largest=False)[1]].flatten()
+            unary_data = unary_data[idx_min]
+
+        unary_data = unary_data.detach().cpu()
         unary_dfs = unary_data.numpy()
         unary_dfs = np.exp(unary_dfs)
-        # vmin = unary_data.min()
-        # vmax = unary_data.max()
-        vmin = 0.0
-        vmax = 1.0
-        fig, axs = plt.subplots(6, 10, figsize=(55, 30))
+
+        if extract_jsd:
+            fig, axs = plt.subplots(2, 2, figsize=(8, 8))
+        else:
+            fig, axs = plt.subplots(6, 10, figsize=(55, 30))
         for i, ax in enumerate(axs.flatten()):
             ax.plot(np.arange(0, unary_dfs.shape[1]), unary_dfs[i])
             ax.set_xlabel("word index")

@@ -21,6 +21,7 @@ from visualization import (
     visualize_rule_graph,
 )
 
+from collections import Counter
 from pathlib import Path
 import pickle
 
@@ -44,6 +45,9 @@ class Evaluate(CMD):
         self.device = args.device
         self.args = args
 
+        #####################
+        ### Preprocessing ###
+        #####################
         # Load Dataset
         dataset = DataModule(args)
         self.vocab = dataset.word_vocab
@@ -79,7 +83,9 @@ class Evaluate(CMD):
             test_loader, device=self.device
         )
 
-        # Evaluate
+        ##################
+        ### Evaluation ###
+        ##################
         (
             metric_f1,
             metric_uas,
@@ -100,6 +106,22 @@ class Evaluate(CMD):
             print("No UAS")
         print(metric_f1)
         print(likelihood)
+
+        #################
+        ### Analaysis ###
+        #################
+        # Tree
+        pred_tree = [span_to_tree(t["pred_tree"]) for t in self.parse_trees]
+        sent = [t["sentence"] for t in self.parse_trees]
+        for t, s in zip(pred_tree, sent):
+            pos = t.treepositions("leaves")
+            for p, w in zip(pos, s):
+                t[p] = w
+        prod_c = Counter(
+            [p for t in pred_tree for p in t.productions()]
+        ).most_common()
+        u_prod = [p for p in prod_c if len(p[0].rhs()) == 1]
+        b_prod = [p for p in prod_c if len(p[0].rhs()) == 2]
 
         # Partition Function
         self.writer = SummaryWriter(self.args.load_from_dir)

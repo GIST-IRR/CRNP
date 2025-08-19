@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
-from ..model.PCFG_module import (
-    PCFG_module,
-    UnaryRule_parameterizer,
-)
+from ..model.PCFG_module import UnaryRule_parameterizer
 from ..model.NeuralPCFG import NeuralPCFG
 
 from ..pfs.td_partition_function import TDPartitionFunction
@@ -201,6 +198,9 @@ class TNPCFG(NeuralPCFG):
 
     def _init_grammar(self):
         self._embedding_sharing()
+        self.root_emb = nn.Parameter(torch.randn(1, self.s_dim))
+        self.nonterm_emb = nn.Parameter(torch.randn(self.NT, self.s_dim))
+        self.term_emb = nn.Parameter(torch.randn(self.T, self.s_dim))
         # terms
         self.terms = UnaryRule_parameterizer(
             self.s_dim,
@@ -349,6 +349,8 @@ class TNPCFG(NeuralPCFG):
                 self.rules = self.compose(self.rules)
 
         rules = self.batchify(self.rules, input["word"])
-        result = self.decode(rules, input["seq_len"], decode_type, label)
+        result = self.decode(
+            rules, lens=input["seq_len"], decode_type=decode_type, label=label
+        )
 
         return result

@@ -142,7 +142,7 @@ def main(
     print("successfully load")
 
     dataset = dataset.drop(lambda x: x["seq_len"] < 0, inplace=False)
-    dataset = dataset.drop(lambda x: x["seq_len"] > 40, inplace=False)
+    # dataset = dataset.drop(lambda x: x["seq_len"] > 40, inplace=False)
     sampler = ByLengthSampler(dataset=dataset, batch_size=batch_size)
     dataloader = DataSetIter(dataset=dataset, batch_sampler=sampler)
     autoloader = DataPrefetcher(dataloader, device=device)

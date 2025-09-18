@@ -54,6 +54,7 @@ def main(args, max_len=40, min_len=2):
     totally_same = []
     different = []
     diff_n_bigger = []
+    diff_n_lower = []
     f1s = [[] for _ in range(len(trees))]
     iou_bts = [[] for _ in range(len(comb))]
     self_f1s = [[] for _ in range(len(comb))]
@@ -145,6 +146,7 @@ def main(args, max_len=40, min_len=2):
         item = {
             "word": word,
             "gold": gt,
+            "gold_tree": gs["tree"],
             "mean": np.mean(scores),
             "var": np.var(scores),
         }
@@ -153,6 +155,7 @@ def main(args, max_len=40, min_len=2):
         for i, p in enumerate(pred):
             # item[f"word{i+1}"] = ts[i]["word"]
             item[f"pred{i+1}"] = p
+            item[f"tree{i+1}"] = ts[i]["tree"]
             item[f"score{i+1}"] = scores[i]
             item[f"iou{i+1}"] = iou[i]
             # if len(pred) <= 2 and i == 1:
@@ -176,6 +179,8 @@ def main(args, max_len=40, min_len=2):
         # and the length of word is bigger than 2, add to diff_n_bigger
         if len(word) > 2 and scores[0] > scores[1]:
             diff_n_bigger.append(item)
+        elif len(word) > 2 and scores[0] < scores[1]:
+            diff_n_lower.append(item)
 
         # Save the structure of the same predicted treess
         if len(word) > 2:

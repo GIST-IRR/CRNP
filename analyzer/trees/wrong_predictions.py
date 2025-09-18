@@ -82,6 +82,7 @@ def main(pred, gold, vocab, max_len=40, min_len=2):
             gt = gs["span"]
             gt = [s[:2] for s in gt]
             gt = sort_span(gt)
+            g_pt = [p[1] for p in gs["tree"].pos()]
 
         # Preprocessing predicted trees
         pd = [s[:2] for s in t["span"]]
@@ -102,8 +103,15 @@ def main(pred, gold, vocab, max_len=40, min_len=2):
         fn = gt - pd
         fn_prod = tuple([production_by_span(gs["tree"], s) for s in fn])
         fn_prods.update(fn_prod)
-        if len(fp) > 0 or len(fn) > 0:
-            match_up.append({"fp": fp_prod, "fn": fn_prod})
+        if len(fn) > 0:
+            match_up.append(
+                {
+                    "fp": fp_prod,
+                    "fn": fn_prod,
+                    "gt": gs["tree"],
+                    "pt": t["tree"],
+                }
+            )
         # print("test")
 
     pass

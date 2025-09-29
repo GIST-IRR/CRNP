@@ -1,6 +1,6 @@
 # Collapse-Relaxing Neural Parameterization
 
-Source code of EMNLP2025 Main [Probability Distribution Collapse: A Critical Bottleneck to Compact Unsupervised Neural Grammar Induction](https://arxiv.org/abs/2407.16181).
+Source code of EMNLP2025 Main [Probability Distribution Collapse: A Critical Bottleneck to Compact Unsupervised Neural Grammar Induction](http://arxiv.org/abs/2509.20734).
 Our code is based on the [TN-PCFG](https://github.com/sustcsonglin/TN-PCFG).
 
 > [!NOTE]
